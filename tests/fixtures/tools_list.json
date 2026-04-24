@@ -1,0 +1,253 @@
+[
+  {
+    "description": "List source files under raw/ (excluding raw/assets). offset is 0-indexed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "max items (default: 100)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "0-indexed item offset (default: 0)",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "raw_list",
+    "title": "List Raw Sources"
+  },
+  {
+    "description": "Read a raw source file with optional chunking. offset is 1-indexed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "max lines (default: 200)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "1-indexed line offset (default: 1)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "path relative to raw/",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "raw_read",
+    "title": "Read Raw Source"
+  },
+  {
+    "description": "Upload into raw/ via url, path, or base64 content. exactly one input mode required.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "description": "base64 content",
+          "type": "string"
+        },
+        "name": {
+          "description": "destination filename in raw/",
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "raw_upload",
+    "title": "Upload Raw Source"
+  },
+  {
+    "description": "Read a wiki page with optional chunking. offset is 1-indexed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "max lines (default: 200)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "1-indexed line offset (default: 1)",
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_read",
+    "title": "Read Wiki Page"
+  },
+  {
+    "description": "Search wiki markdown by case-insensitive substring.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_search",
+    "title": "Search Wiki"
+  },
+  {
+    "description": "Apply exact oldText/newText replacements and append wiki log.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "edits": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "newText": {
+                "type": "string"
+              },
+              "oldText": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "oldText",
+              "newText"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "log_action": {
+          "type": "string"
+        },
+        "log_description": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "edits",
+        "log_action",
+        "log_description"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_edit",
+    "title": "Edit Wiki Page"
+  },
+  {
+    "description": "Write full markdown file and append wiki log.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "log_action": {
+          "type": "string"
+        },
+        "log_description": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "content",
+        "log_action",
+        "log_description"
+      ],
+      "type": "object"
+    },
+    "name": "wiki_write",
+    "title": "Write Wiki Page"
+  },
+  {
+    "description": "List markdown pages in vault with pagination. offset is 0-indexed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "max items (default: 100)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "0-indexed item offset (default: 0)",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "wiki_list",
+    "title": "List Wiki Pages"
+  },
+  {
+    "description": "Run lint checks for links, orphans, and stale logs.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "wiki_lint",
+    "title": "Lint Wiki"
+  },
+  {
+    "description": "Read wiki/index.md.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "wiki_index",
+    "title": "Read Index"
+  },
+  {
+    "description": "Run sync backend for vault.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "wiki_sync",
+    "title": "Sync Wiki"
+  },
+  {
+    "description": "Return workflow and authoring guide for this vault.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "wiki_help",
+    "title": "Wiki Help"
+  }
+]
