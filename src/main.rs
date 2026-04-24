@@ -108,7 +108,12 @@ enum Commands {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
-    Lint,
+    Lint {
+        #[arg(long)]
+        fix: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
     Index {
         #[arg(long, default_value_t = 1)]
         offset: usize,
@@ -232,7 +237,7 @@ async fn main() -> Result<()> {
             log_description,
         } => cmd_write(path, content, content_file, log_action, log_description),
         Commands::List { offset, limit } => cmd_list(offset, limit),
-        Commands::Lint => cmd_lint(),
+        Commands::Lint { fix, dry_run } => cmd_lint(fix, dry_run),
         Commands::Index { offset, limit } => cmd_index(offset, limit),
         Commands::Sync => cmd_sync().await,
         Commands::Doctor { json } => doctor::run(json).await,
@@ -457,10 +462,10 @@ fn cmd_list(offset: usize, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn cmd_lint() -> Result<()> {
+fn cmd_lint(fix: bool, dry_run: bool) -> Result<()> {
     let cfg = config::load_or_default()?;
     let wiki = WikiOps::new(cfg);
-    let report = wiki.lint()?;
+    let report = wiki.lint_with_options(writestead::wiki::LintOptions { fix, dry_run })?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }

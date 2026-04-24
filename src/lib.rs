@@ -8,3 +8,4 @@ pub mod server;
 pub mod syncer;
 pub mod vault;
 pub mod wiki;
+pub mod wiki_lint;

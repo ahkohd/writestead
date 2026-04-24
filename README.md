@@ -100,7 +100,9 @@ docker restart writestead
 - `writestead edit <path> --old-text ... --new-text ... --log-action ... --log-description ...` — exact-match replacement
 - `writestead write <path> --content-file ... --log-action ... --log-description ...` — write full page
 - `writestead list` — list wiki pages with pagination
-- `writestead lint` — run lint checks
+- `writestead lint` — run structural lint checks
+- `writestead lint --fix` — apply safe lint fixes
+- `writestead lint --fix --dry-run` — preview safe lint fixes
 - `writestead index` — read wiki/index.md
 
 ### Raw
@@ -137,7 +139,7 @@ Configure bind address with config keys (`host`, `port`) or env (`WRITESTEAD_HOS
 | `wiki_edit` | Exact oldText/newText replacement with log |
 | `wiki_write` | Write full page with log |
 | `wiki_list` | List pages (0-indexed item pagination) |
-| `wiki_lint` | Detect orphans, broken links, stale logs |
+| `wiki_lint` | Validate vault structure, frontmatter, links, orphans, and stale logs |
 | `wiki_index` | Read wiki/index.md |
 | `wiki_sync` | Run sync backend |
 | `wiki_help` | Print workflow guide |

@@ -3,7 +3,8 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
@@ -15,9 +16,6 @@ static WIKILINK_RE: LazyLock<Regex> =
 static UPDATED_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^updated:\s*\d{4}-\d{2}-\d{2}\s*$").expect("valid updated regex")
 });
-static LOG_DATE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\d{4}-\d{2}-\d{2}\]").expect("valid log date regex"));
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Frontmatter {
     pub title: String,
@@ -50,21 +48,12 @@ pub struct ListPagesResult {
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrokenLink {
-    pub source: String,
-    pub link: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LintReport {
-    pub stale_logs: Vec<String>,
-    pub orphan_pages: Vec<String>,
-    pub broken_links: Vec<BrokenLink>,
-    pub missing_pages: Vec<String>,
-    pub duplicate_titles: Vec<String>,
-    pub missing_frontmatter: Vec<String>,
-}
+pub use crate::wiki_lint::{
+    BadFrontmatter, BrokenLink, ContentDrift, DuplicateIndexEntry, DuplicateIndexSection,
+    ForeignIndexContent, ForeignLogContent, InvalidFrontmatter, LintFix, LintOptions, LintReport,
+    LogIssue, LogOrderIssue, MisplacedPage, MissingIndexSection, MissingStructure,
+    StaleIndexMixedBullet, UnindexedPage,
+};
 
 #[derive(Debug, Clone)]
 pub struct WikiOps {
@@ -76,7 +65,7 @@ impl WikiOps {
         Self { config }
     }
 
-    fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         PathBuf::from(&self.config.vault_path)
     }
 
@@ -85,7 +74,7 @@ impl WikiOps {
         Ok(self.root().join(cleaned))
     }
 
-    fn to_rel_path(&self, full: &Path) -> String {
+    pub(crate) fn to_rel_path(&self, full: &Path) -> String {
         full.strip_prefix(self.root())
             .unwrap_or(full)
             .to_string_lossy()
@@ -353,114 +342,6 @@ impl WikiOps {
         Ok(())
     }
 
-    pub fn lint(&self) -> Result<LintReport> {
-        let root = self.root();
-        let mut pages: HashMap<String, String> = HashMap::new();
-        let mut outbound: HashMap<String, Vec<String>> = HashMap::new();
-        let mut titles: HashMap<String, Vec<String>> = HashMap::new();
-
-        for entry in WalkDir::new(&root)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry.file_type().is_file() && entry.file_name().to_string_lossy().ends_with(".md")
-            })
-        {
-            let rel = self.to_rel_path(entry.path());
-            let text = match fs::read_to_string(entry.path()) {
-                Ok(text) => text,
-                Err(_) => continue,
-            };
-
-            let links = extract_wikilinks(&text);
-            let (fm, _) = parse_frontmatter(&text);
-            if let Some(fm) = fm {
-                titles.entry(fm.title).or_default().push(rel.clone());
-            }
-
-            pages.insert(rel.clone(), text.clone());
-            outbound.insert(rel, links);
-        }
-
-        let link_index = build_link_index(pages.keys());
-
-        let mut inbound: HashMap<String, HashSet<String>> = HashMap::new();
-        for (source, links) in &outbound {
-            for link in links {
-                if let Some(target) = resolve_link(link, &link_index) {
-                    inbound.entry(target).or_default().insert(source.clone());
-                }
-            }
-        }
-
-        let mut orphan_pages = Vec::new();
-        let mut broken_links = Vec::new();
-        let mut missing_pages: HashSet<String> = HashSet::new();
-        let mut missing_frontmatter = Vec::new();
-
-        for (source, links) in &outbound {
-            if !inbound.contains_key(source)
-                && !source.ends_with("index.md")
-                && !source.ends_with("log.md")
-            {
-                orphan_pages.push(source.clone());
-            }
-
-            for link in links {
-                if resolve_link(link, &link_index).is_none() {
-                    let clean = link.trim();
-                    if !clean.is_empty() {
-                        broken_links.push(BrokenLink {
-                            source: source.clone(),
-                            link: clean.to_string(),
-                        });
-                        missing_pages.insert(clean.to_string());
-                    }
-                }
-            }
-
-            let source_text = pages.get(source).cloned().unwrap_or_default();
-            if parse_frontmatter(&source_text).0.is_none() {
-                missing_frontmatter.push(source.clone());
-            }
-        }
-
-        let log_text = pages.get("wiki/log.md").cloned().unwrap_or_default();
-        let last_log_date =
-            extract_last_log_date(&log_text).unwrap_or_else(|| "1970-01-01".to_string());
-
-        let mut stale_logs = Vec::new();
-        for (rel, text) in &pages {
-            if let Some(fm) = parse_frontmatter(text).0 {
-                if fm.updated > last_log_date {
-                    stale_logs.push(format!("{} (updated: {})", rel, fm.updated));
-                }
-            }
-        }
-
-        let duplicate_titles: Vec<String> = titles
-            .values()
-            .filter(|entries| entries.len() > 1)
-            .flat_map(|entries| entries.iter().cloned())
-            .collect();
-
-        let mut missing_pages: Vec<String> = missing_pages.into_iter().collect();
-        missing_pages.sort();
-        orphan_pages.sort();
-        broken_links.sort_by(|a, b| a.source.cmp(&b.source).then(a.link.cmp(&b.link)));
-        stale_logs.sort();
-        missing_frontmatter.sort();
-
-        Ok(LintReport {
-            stale_logs,
-            orphan_pages,
-            broken_links,
-            missing_pages,
-            duplicate_titles,
-            missing_frontmatter,
-        })
-    }
-
     fn update_index_for_new_page(&self, rel_path: &str, content: &str) -> Result<()> {
         let index_path = self.resolve_rel_path("wiki/index.md")?;
         let mut text = fs::read_to_string(&index_path).unwrap_or_default();
@@ -525,6 +406,7 @@ impl WikiOps {
                 byte_pos += line.len() + 1;
             }
 
+            let byte_pos = next_char_boundary(&text, byte_pos);
             text.insert_str(byte_pos, &format!("\n- {} -- (auto-indexed)", link));
         } else {
             text.push_str(&format!(
@@ -537,6 +419,14 @@ impl WikiOps {
             .with_context(|| format!("failed to write {}", index_path.display()))?;
         Ok(())
     }
+}
+
+fn next_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 fn sanitize_rel_path(input: &str) -> Result<PathBuf> {
@@ -567,7 +457,13 @@ fn sanitize_rel_path(input: &str) -> Result<PathBuf> {
     Ok(out)
 }
 
-fn parse_frontmatter(text: &str) -> (Option<Frontmatter>, String) {
+pub(crate) enum FrontmatterValue {
+    Missing,
+    Invalid(String),
+    Valid(serde_yaml::Value),
+}
+
+pub(crate) fn parse_frontmatter(text: &str) -> (Option<Frontmatter>, String) {
     let normalized = text.replace("\r\n", "\n");
     let mut lines = normalized.lines();
     if lines.next() != Some("---") {
@@ -596,6 +492,254 @@ fn parse_frontmatter(text: &str) -> (Option<Frontmatter>, String) {
     }
 }
 
+pub(crate) fn parse_frontmatter_value(text: &str) -> FrontmatterValue {
+    let normalized = text.replace("\r\n", "\n");
+    let mut lines = normalized.lines();
+    if lines.next() != Some("---") {
+        return FrontmatterValue::Missing;
+    }
+
+    let mut yaml_lines = Vec::new();
+    let mut found_end = false;
+    for line in lines.by_ref() {
+        if line.trim() == "---" {
+            found_end = true;
+            break;
+        }
+        yaml_lines.push(line);
+    }
+
+    if !found_end {
+        return FrontmatterValue::Invalid("unterminated frontmatter".to_string());
+    }
+
+    match serde_yaml::from_str::<serde_yaml::Value>(&yaml_lines.join("\n")) {
+        Ok(value) => FrontmatterValue::Valid(value),
+        Err(err) => FrontmatterValue::Invalid(err.to_string()),
+    }
+}
+
+pub(crate) fn validate_frontmatter_schema(path: &str, value: &serde_yaml::Value) -> Vec<String> {
+    let mut issues = Vec::new();
+    let Some(map) = value.as_mapping() else {
+        return vec!["frontmatter must be a mapping".to_string()];
+    };
+
+    let page_type = yaml_string_field(value, "type");
+    let Some(page_type) = page_type else {
+        issues.push("missing field: type".to_string());
+        return issues;
+    };
+
+    if !known_page_type(&page_type) {
+        issues.push(format!("unknown type: {}", page_type));
+    }
+
+    let expected_type = expected_type_for_path(path);
+    if let Some(expected) = expected_type {
+        if page_type != expected {
+            issues.push(format!(
+                "wrong type: expected '{}', got '{}'",
+                expected, page_type
+            ));
+        }
+    }
+
+    for field in required_fields(&page_type) {
+        if !mapping_contains_key(map, field) {
+            issues.push(format!("missing field: {}", field));
+        }
+    }
+
+    for (field, expected) in [
+        ("title", "string"),
+        ("type", "string"),
+        ("created", "date"),
+        ("updated", "date"),
+        ("tags", "list"),
+        ("source_url", "string"),
+        ("version", "number"),
+    ] {
+        if mapping_contains_key(map, field) && !field_has_type(value, field, expected) {
+            issues.push(format!("wrong field type: {} expected {}", field, expected));
+        }
+    }
+
+    let allowed = allowed_fields(&page_type);
+    for key in map.keys().filter_map(|key| key.as_str()) {
+        if !allowed.contains(&key) {
+            issues.push(format!("unknown field: {}", key));
+        }
+    }
+
+    issues.sort();
+    issues.dedup();
+    issues
+}
+
+fn mapping_contains_key(map: &serde_yaml::Mapping, field: &str) -> bool {
+    map.contains_key(serde_yaml::Value::String(field.to_string()))
+}
+
+pub(crate) fn yaml_string_field(value: &serde_yaml::Value, field: &str) -> Option<String> {
+    value
+        .as_mapping()?
+        .get(serde_yaml::Value::String(field.to_string()))?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn field_has_type(value: &serde_yaml::Value, field: &str, expected: &str) -> bool {
+    let Some(field_value) = value
+        .as_mapping()
+        .and_then(|map| map.get(serde_yaml::Value::String(field.to_string())))
+    else {
+        return true;
+    };
+
+    match expected {
+        "string" => field_value.as_str().is_some(),
+        "date" => field_value.as_str().map(is_iso_date).unwrap_or(false),
+        "list" => field_value.as_sequence().is_some(),
+        "number" => field_value.as_i64().is_some() || field_value.as_u64().is_some(),
+        _ => true,
+    }
+}
+
+pub(crate) fn is_iso_date(value: &str) -> bool {
+    value.len() == 10
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+        && chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
+}
+
+fn known_page_type(page_type: &str) -> bool {
+    matches!(
+        page_type,
+        "entity" | "concept" | "source" | "analysis" | "index" | "log" | "schema" | "skill"
+    )
+}
+
+fn required_fields(page_type: &str) -> &'static [&'static str] {
+    match page_type {
+        "entity" | "concept" | "source" | "analysis" => {
+            &["title", "type", "created", "updated", "tags"]
+        }
+        "index" | "log" | "schema" | "skill" => &["title", "type"],
+        _ => &["title", "type"],
+    }
+}
+
+fn allowed_fields(page_type: &str) -> &'static [&'static str] {
+    match page_type {
+        "source" => &["title", "type", "created", "updated", "tags", "source_url"],
+        "entity" | "concept" | "analysis" => &["title", "type", "created", "updated", "tags"],
+        "schema" => &["title", "type", "version"],
+        "index" | "log" | "skill" => &["title", "type"],
+        _ => &["title", "type", "created", "updated", "tags"],
+    }
+}
+
+pub(crate) fn expected_type_for_path(path: &str) -> Option<&'static str> {
+    match path {
+        "SCHEMA.md" => Some("schema"),
+        "SKILL.md" => Some("skill"),
+        "wiki/index.md" => Some("index"),
+        "wiki/log.md" => Some("log"),
+        _ if path.starts_with("wiki/entities/") && path.ends_with(".md") => Some("entity"),
+        _ if path.starts_with("wiki/concepts/") && path.ends_with(".md") => Some("concept"),
+        _ if path.starts_with("wiki/sources/") && path.ends_with(".md") => Some("source"),
+        _ if path.starts_with("wiki/analyses/") && path.ends_with(".md") => Some("analysis"),
+        _ => None,
+    }
+}
+
+pub(crate) fn is_content_page(path: &str) -> bool {
+    matches!(
+        expected_type_for_path(path),
+        Some("entity" | "concept" | "source" | "analysis")
+    )
+}
+
+pub(crate) fn is_lint_scope_file(path: &str) -> bool {
+    expected_type_for_path(path).is_some()
+}
+
+pub(crate) fn template_for_path(path: &str) -> String {
+    match path {
+        "SCHEMA.md" => "---\ntitle: Wiki Schema\ntype: schema\nversion: 1\n---\n\n# Wiki Schema\n\n<!-- describe the wiki conventions here -->\n".to_string(),
+        "SKILL.md" => "---\ntitle: Wiki Skill\ntype: skill\n---\n\n# Wiki Skill\n".to_string(),
+        "wiki/index.md" => "---\ntitle: Index\ntype: index\n---\n\n# Wiki Index\n".to_string(),
+        "wiki/log.md" => "---\ntitle: Log\ntype: log\n---\n\n# Wiki Log\n".to_string(),
+        _ => default_frontmatter_for_path(path),
+    }
+}
+
+pub(crate) fn default_frontmatter_for_path(path: &str) -> String {
+    let title = title_from_path(path);
+    let page_type = expected_type_for_path(path).unwrap_or("entity");
+    if matches!(page_type, "entity" | "concept" | "source" | "analysis") {
+        let today = Utc::now().format("%Y-%m-%d");
+        format!(
+            "---\ntitle: {}\ntype: {}\ncreated: {}\nupdated: {}\ntags: []\n---\n\n",
+            title, page_type, today, today
+        )
+    } else {
+        format!("---\ntitle: {}\ntype: {}\n---\n\n", title, page_type)
+    }
+}
+
+pub(crate) fn title_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().replace(['-', '_'], " "))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Untitled".to_string())
+}
+
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+pub(crate) fn strip_markdown_code(text: &str) -> String {
+    let mut out = String::new();
+    let mut in_fence = false;
+
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            out.push('\n');
+            continue;
+        }
+        if in_fence {
+            out.push('\n');
+            continue;
+        }
+        out.push_str(&strip_inline_code(line));
+        out.push('\n');
+    }
+
+    out
+}
+
+fn strip_inline_code(line: &str) -> String {
+    let mut out = String::new();
+    let mut in_code = false;
+    for ch in line.chars() {
+        if ch == '`' {
+            in_code = !in_code;
+            out.push(' ');
+        } else if in_code {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn update_frontmatter_updated(text: &str) -> String {
     let today = Utc::now().format("%Y-%m-%d").to_string();
     if UPDATED_RE.is_match(text) {
@@ -607,14 +751,16 @@ fn update_frontmatter_updated(text: &str) -> String {
     }
 }
 
-fn extract_wikilinks(text: &str) -> Vec<String> {
+pub(crate) fn extract_wikilinks(text: &str) -> Vec<String> {
     WIKILINK_RE
         .captures_iter(text)
         .filter_map(|caps| caps.get(1).map(|value| value.as_str().to_string()))
         .collect()
 }
 
-fn build_link_index<'a>(paths: impl Iterator<Item = &'a String>) -> HashMap<String, String> {
+pub(crate) fn build_link_index<'a>(
+    paths: impl Iterator<Item = &'a String>,
+) -> HashMap<String, String> {
     let mut index = HashMap::new();
 
     for rel in paths {
@@ -640,7 +786,7 @@ fn build_link_index<'a>(paths: impl Iterator<Item = &'a String>) -> HashMap<Stri
     index
 }
 
-fn normalize_link_key(link: &str) -> Option<String> {
+pub(crate) fn normalize_link_key(link: &str) -> Option<String> {
     let clean = link.trim();
     if clean.is_empty() {
         return None;
@@ -663,24 +809,9 @@ fn normalize_link_key(link: &str) -> Option<String> {
     Some(no_ext.to_lowercase())
 }
 
-fn resolve_link(link: &str, link_index: &HashMap<String, String>) -> Option<String> {
+pub(crate) fn resolve_link(link: &str, link_index: &HashMap<String, String>) -> Option<String> {
     let key = normalize_link_key(link)?;
     link_index.get(&key).cloned()
-}
-
-fn extract_last_log_date(text: &str) -> Option<String> {
-    let mut dates: Vec<String> = LOG_DATE_RE
-        .find_iter(text)
-        .map(|item| {
-            item.as_str()
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .to_string()
-        })
-        .collect();
-
-    dates.sort();
-    dates.last().cloned()
 }
 
 fn detect_fd_program() -> Option<&'static str> {

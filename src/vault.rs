@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::wiki::template_for_path;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -34,16 +35,12 @@ pub fn init_vault(cfg: &AppConfig, force: bool) -> Result<InitSummary> {
     let mut created = 0usize;
     let mut touched = 0usize;
 
-    let files = [
-        ("README.md", readme_template(cfg)),
-        ("SCHEMA.md", schema_template()),
-        ("SKILL.md", skill_template()),
-        ("wiki/index.md", index_template()),
-        ("wiki/log.md", log_template()),
-    ];
+    let files = ["SCHEMA.md", "SKILL.md", "wiki/index.md", "wiki/log.md"];
 
-    for (rel, body) in files {
+    for rel in files {
         let path = vault.join(rel);
+        let body = template_for_path(rel);
+
         if write_file_if_needed(&path, &body, force)? {
             created += 1;
         }
@@ -68,81 +65,4 @@ fn write_file_if_needed(path: &Path, body: &str, force: bool) -> Result<bool> {
 
     fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(true)
-}
-
-fn readme_template(cfg: &AppConfig) -> String {
-    format!(
-        "# {}\n\nPersonal knowledge wiki.\n\n- Schema: [SCHEMA.md](SCHEMA.md)\n- Skill: [SKILL.md](SKILL.md)\n- Index: [wiki/index.md](wiki/index.md)\n- Log: [wiki/log.md](wiki/log.md)\n",
-        cfg.name
-    )
-}
-
-fn schema_template() -> String {
-    "# Writestead Wiki Schema
-
-## Structure
-
-```
-writestead/
-  raw/
-  raw/assets/
-  wiki/
-  wiki/index.md
-  wiki/log.md
-  SCHEMA.md
-```
-
-## Conventions
-
-- All wiki pages are markdown with YAML frontmatter.
-- Frontmatter fields: title, type, created, updated, tags.
-- Use [[wikilinks]] for cross-references.
-- Keep pages focused.
-- No emojis.
-
-## Frontmatter template
-
-```yaml
----
-title: Page Title
-type: source | entity | concept | analysis
-created: 2026-04-23
-updated: 2026-04-23
-tags: [tag1, tag2]
----
-```
-"
-    .to_string()
-}
-
-fn skill_template() -> String {
-    "# Writestead Skill
-
-- Read SCHEMA.md before writing.
-- Update wiki/index.md when creating pages.
-- Append to wiki/log.md after changes.
-- Use writestead sync or wiki_sync when done.
-"
-    .to_string()
-}
-
-fn index_template() -> String {
-    "# Wiki Index
-
-## Sources
-
-## Entities
-
-## Concepts
-
-## Analyses
-"
-    .to_string()
-}
-
-fn log_template() -> String {
-    "# Wiki Log
-
-"
-    .to_string()
 }

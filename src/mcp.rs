@@ -2,7 +2,7 @@ use crate::config::{effective_mcp_auth_mode, effective_mcp_bearer_token, AppConf
 use crate::guide::wiki_help_text;
 use crate::raw::{RawOps, RawReadFailure, RawReadOptions};
 use crate::syncer::sync_once_with_trigger;
-use crate::wiki::WikiOps;
+use crate::wiki::{LintOptions, WikiOps};
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::{Json, State};
@@ -309,10 +309,13 @@ fn mcp_tools() -> serde_json::Value {
             {
                 "name": "wiki_lint",
                 "title": "Lint Wiki",
-                "description": "Run lint checks for links, orphans, and stale logs.",
+                "description": "Run structural lint checks for vault shape, frontmatter, links, orphans, and stale logs.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "fix": { "type": "boolean", "description": "apply safe mechanical fixes" },
+                        "dry_run": { "type": "boolean", "description": "show fixes without writing" }
+                    },
                     "additionalProperties": false
                 }
             },
@@ -801,7 +804,9 @@ async fn execute_tool(
             Ok(serde_json::to_value(result)?)
         }
         "wiki_lint" => {
-            let report = state.wiki.lint()?;
+            let fix = args["fix"].as_bool().unwrap_or(false);
+            let dry_run = args["dry_run"].as_bool().unwrap_or(false);
+            let report = state.wiki.lint_with_options(LintOptions { fix, dry_run })?;
             Ok(serde_json::to_value(report)?)
         }
         "wiki_index" => {

@@ -219,10 +219,19 @@
     "title": "List Wiki Pages"
   },
   {
-    "description": "Run lint checks for links, orphans, and stale logs.",
+    "description": "Run structural lint checks for vault shape, frontmatter, links, orphans, and stale logs.",
     "inputSchema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "dry_run": {
+          "description": "show fixes without writing",
+          "type": "boolean"
+        },
+        "fix": {
+          "description": "apply safe mechanical fixes",
+          "type": "boolean"
+        }
+      },
       "type": "object"
     },
     "name": "wiki_lint",
