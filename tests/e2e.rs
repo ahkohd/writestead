@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -313,6 +315,38 @@ fn has_command(name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn write_fake_tool(path: &Path, body: &str) {
+    fs::write(path, body).expect("write fake tool");
+    let mut perms = fs::metadata(path)
+        .expect("fake tool metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod fake tool");
+}
+
+fn doctor_path_with_fake_deps(dir: &Path) -> String {
+    let old_path = std::env::var("PATH").unwrap_or_default();
+
+    #[cfg(unix)]
+    {
+        let fake_bin = dir.join("fake-bin");
+        fs::create_dir_all(&fake_bin).expect("fake bin");
+        write_fake_tool(
+            &fake_bin.join("pdfinfo"),
+            "#!/bin/sh\nprintf 'pdfinfo fake\\n'\n",
+        );
+        write_fake_tool(
+            &fake_bin.join("systemd-run"),
+            "#!/bin/sh\nprintf 'systemd fake\\n'\n",
+        );
+        return format!("{}:{}", fake_bin.display(), old_path);
+    }
+
+    #[allow(unreachable_code)]
+    old_path
 }
 
 #[tokio::test]
@@ -1233,10 +1267,13 @@ async fn doctor_passes_clean_vault() {
 
     let (ok, _out, err) = run_cli(
         &["doctor"],
-        &[(
-            "WRITESTEAD_CONFIG_FILE",
-            config_file.to_string_lossy().to_string(),
-        )],
+        &[
+            (
+                "WRITESTEAD_CONFIG_FILE",
+                config_file.to_string_lossy().to_string(),
+            ),
+            ("PATH", doctor_path_with_fake_deps(dir.path())),
+        ],
     );
 
     assert!(ok, "doctor should pass clean vault: {err}");
@@ -1288,6 +1325,9 @@ async fn doctor_includes_extractor_checks() {
         .collect();
     assert!(names.contains(&"liteparse_binary".to_string()));
     assert!(names.contains(&"pdftotext_binary".to_string()));
+    assert!(names.contains(&"pdfinfo_binary".to_string()));
+    #[cfg(unix)]
+    assert!(names.contains(&"systemd_run_binary".to_string()));
 }
 
 #[tokio::test]

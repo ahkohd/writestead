@@ -31,7 +31,7 @@ writestead --version
 
 Optional tools (install any you need, `writestead doctor` checks availability):
 - [`lit`](https://github.com/run-llama/liteparse) — PDF/DOCX/PPTX/image text extraction
-- [`pdftotext`](https://poppler.freedesktop.org/) — PDF fallback
+- [`poppler-utils`](https://poppler.freedesktop.org/) — PDF utilities
 - [`rg`](https://github.com/BurntSushi/ripgrep), [`fd`](https://github.com/sharkdp/fd) — faster search/listing
 - [`ob`](https://obsidian.md/help/sync/headless) — headless Obsidian Sync
 
@@ -202,6 +202,9 @@ Default path: `~/.config/writestead/config.json` (or `$XDG_CONFIG_HOME/writestea
 - `search.backend` — `auto` | `builtin` | `rg-fd` (default: `auto`)
 - `raw.upload_max_bytes` — upload size cap (default: `52428800`)
 - `raw.url_timeout_seconds` — URL download timeout (default: `30`)
+- `raw.pdf_liteparse_max_pages` — max PDF pages routed to liteparse (default: `30`)
+- `raw.pdf_liteparse_timeout_ms` — liteparse timeout (default: `60000`)
+- `raw.pdf_liteparse_mem_limit_mb` — liteparse memory cap (default: `4096`)
 
 ### Environment variables
 
@@ -227,12 +230,13 @@ writestead start
 - `raw add` detects mode by prefix: `http://` / `https://` downloads, otherwise copies local file
 - `raw read` supports:
   - `.md` / `.txt` / `.json` / `.yaml` / `.csv` / `.html` / `.xml` / `.rst` / `.tex` / `.log` — direct text read
-  - `.pdf` — `lit parse`, fallback `pdftotext`
+  - `.pdf` — `lit parse` or `pdftotext` by size
   - `.docx` / `.pptx` / `.xlsx` — `lit parse`
   - images (`.png` / `.jpg` / `.tiff` / `.webp`) — `lit parse` with OCR
   - unknown types rejected
 - `raw upload` (MCP) accepts exactly one of: `url`, `path` (vault-relative), or `content` (base64)
 - `raw/assets/` is excluded from listing and reading (deferred)
+- PDF page windows: `writestead raw read manual.pdf --page-start 1 --page-end 20`
 
 ## Search acceleration
 
@@ -289,4 +293,5 @@ Alert suggestions:
 - If daemon won't start, check `writestead status` and `~/.config/writestead/writestead.log`
 - If MCP auth fails, verify `WRITESTEAD_BEARER_TOKEN` is set and `mcp.auth.mode=bearer`
 - If raw reads fail for PDF/DOCX, install `lit` (`npm i -g @llamaindex/liteparse`)
+- For large PDFs, install `poppler-utils`
 - If search is slow on large vaults, install `rg` and `fd`

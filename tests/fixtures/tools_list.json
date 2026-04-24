@@ -31,6 +31,14 @@
           "description": "1-indexed line offset (default: 1)",
           "type": "integer"
         },
+        "page_end": {
+          "description": "PDF page end, inclusive",
+          "type": "integer"
+        },
+        "page_start": {
+          "description": "PDF page start, 1-indexed",
+          "type": "integer"
+        },
         "path": {
           "description": "path relative to raw/",
           "type": "string"

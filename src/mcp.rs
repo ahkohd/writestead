@@ -1,6 +1,6 @@
 use crate::config::{effective_mcp_auth_mode, effective_mcp_bearer_token, AppConfig, McpAuthMode};
 use crate::guide::wiki_help_text;
-use crate::raw::RawOps;
+use crate::raw::{RawOps, RawReadFailure, RawReadOptions};
 use crate::syncer::sync_once;
 use crate::wiki::WikiOps;
 use anyhow::{Context, Result};
@@ -38,6 +38,7 @@ pub struct McpState {
     pub raw_upload_bytes_total: Arc<AtomicU64>,
     pub raw_read_count: Arc<AtomicU64>,
     pub raw_read_by_format: Arc<RwLock<HashMap<String, u64>>>,
+    pub raw_read_failure_by_extractor: Arc<RwLock<HashMap<String, u64>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -198,7 +199,9 @@ fn mcp_tools() -> serde_json::Value {
                     "properties": {
                         "path": { "type": "string", "description": "path relative to raw/" },
                         "offset": { "type": "integer", "description": "1-indexed line offset (default: 1)" },
-                        "limit": { "type": "integer", "description": "max lines (default: 200)" }
+                        "limit": { "type": "integer", "description": "max lines (default: 200)" },
+                        "page_start": { "type": "integer", "description": "PDF page start, 1-indexed" },
+                        "page_end": { "type": "integer", "description": "PDF page end, inclusive" }
                     },
                     "required": ["path"],
                     "additionalProperties": false
@@ -602,6 +605,15 @@ pub async fn handle_mcp(
                     }
 
                     let error_text = if name == "raw_read" {
+                        {
+                            let extractor = err
+                                .downcast_ref::<RawReadFailure>()
+                                .map(RawReadFailure::extractor)
+                                .unwrap_or("unknown");
+                            let mut failures = state.raw_read_failure_by_extractor.write().await;
+                            *failures.entry(extractor.to_string()).or_insert(0) += 1;
+                        }
+
                         serde_json::to_string_pretty(&json!({
                             "format": "error",
                             "error": err.to_string(),
@@ -662,7 +674,20 @@ async fn execute_tool(
             let path = args["path"].as_str().context("missing path")?.to_string();
             let offset = args["offset"].as_u64().unwrap_or(1) as usize;
             let limit = args["limit"].as_u64().unwrap_or(200) as usize;
-            let result = state.raw.read_source(&path, offset, limit).await?;
+            let page_start = args["page_start"].as_u64().map(|v| v as u32);
+            let page_end = args["page_end"].as_u64().map(|v| v as u32);
+            let result = state
+                .raw
+                .read_source_with_options(
+                    &path,
+                    RawReadOptions {
+                        offset,
+                        limit,
+                        page_start,
+                        page_end,
+                    },
+                )
+                .await?;
 
             state.raw_read_count.fetch_add(1, Ordering::Relaxed);
             {

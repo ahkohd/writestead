@@ -2,6 +2,7 @@ use crate::config::{AppConfig, SearchBackend};
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
@@ -40,6 +41,58 @@ pub struct RawAddResult {
     pub path: String,
     pub size_bytes: u64,
     pub source: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RawReadOptions {
+    pub offset: usize,
+    pub limit: usize,
+    pub page_start: Option<u32>,
+    pub page_end: Option<u32>,
+}
+
+impl RawReadOptions {
+    pub fn lines(offset: usize, limit: usize) -> Self {
+        Self {
+            offset,
+            limit,
+            page_start: None,
+            page_end: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PdfPageRange {
+    start: u32,
+    end: u32,
+}
+
+#[derive(Debug)]
+pub struct RawReadFailure {
+    extractor: &'static str,
+    message: String,
+}
+
+impl RawReadFailure {
+    pub fn extractor(&self) -> &'static str {
+        self.extractor
+    }
+}
+
+impl Display for RawReadFailure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for RawReadFailure {}
+
+fn raw_read_failure(extractor: &'static str, err: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(RawReadFailure {
+        extractor,
+        message: format!("{:#}", err),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +218,15 @@ impl RawOps {
         offset: usize,
         limit: usize,
     ) -> Result<RawReadResult> {
+        self.read_source_with_options(raw_path, RawReadOptions::lines(offset, limit))
+            .await
+    }
+
+    pub async fn read_source_with_options(
+        &self,
+        raw_path: &str,
+        options: RawReadOptions,
+    ) -> Result<RawReadResult> {
         let rel = sanitize_raw_rel_path(raw_path)?;
         if is_assets_rel(&rel) {
             anyhow::bail!("raw/assets is not supported yet: {}", raw_path);
@@ -184,8 +246,8 @@ impl RawOps {
             .to_lowercase();
 
         let path_out = format!("raw/{}", rel.to_string_lossy());
-        let safe_offset = offset.max(1);
-        let safe_limit = limit.max(1);
+        let safe_offset = options.offset.max(1);
+        let safe_limit = options.limit.max(1);
 
         if is_text_ext(&ext) {
             let text = read_text_file_guarded(&full, meta.len())?;
@@ -204,9 +266,46 @@ impl RawOps {
         }
 
         if ext == "pdf" {
-            let (parsed, extractor) = match run_liteparse(&full).await {
-                Ok(text) => (text, "liteparse".to_string()),
-                Err(_) => (run_pdftotext(&full).await?, "pdftotext".to_string()),
+            let requested_range = pdf_page_range(options.page_start, options.page_end)?;
+            let page_count = pdf_page_count(&full).await.ok();
+            let range = clamp_pdf_page_range(requested_range, page_count)?;
+
+            let max_liteparse_pages = self.config.raw.pdf_liteparse_max_pages.max(1);
+            let should_use_liteparse = range.is_none()
+                && page_count
+                    .map(|pages| pages <= max_liteparse_pages)
+                    .unwrap_or(true);
+
+            let (parsed, extractor) = if should_use_liteparse {
+                match run_liteparse(
+                    &full,
+                    self.config.raw.pdf_liteparse_timeout_ms,
+                    self.config.raw.pdf_liteparse_mem_limit_mb,
+                )
+                .await
+                {
+                    Ok(text) => (text, "liteparse".to_string()),
+                    Err(err) => {
+                        tracing::warn!(
+                            "liteparse failed for {}; falling back to pdftotext: {}",
+                            full.display(),
+                            err
+                        );
+                        (
+                            run_pdftotext(&full, range)
+                                .await
+                                .map_err(|err| raw_read_failure("pdftotext", err))?,
+                            "pdftotext".to_string(),
+                        )
+                    }
+                }
+            } else {
+                (
+                    run_pdftotext(&full, range)
+                        .await
+                        .map_err(|err| raw_read_failure("pdftotext", err))?,
+                    "pdftotext".to_string(),
+                )
             };
 
             let bounded = clamp_text(parsed);
@@ -226,12 +325,19 @@ impl RawOps {
         }
 
         if is_lit_only_ext(&ext) {
-            let parsed = run_liteparse(&full).await.with_context(|| {
+            let parsed = run_liteparse(
+                &full,
+                self.config.raw.pdf_liteparse_timeout_ms,
+                self.config.raw.pdf_liteparse_mem_limit_mb,
+            )
+            .await
+            .with_context(|| {
                 format!(
                     "failed to parse {} with liteparse, install 'lit' if missing",
                     full.display()
                 )
-            })?;
+            })
+            .map_err(|err| raw_read_failure("liteparse", err))?;
             let bounded = clamp_text(parsed);
             let page = paginate_lines(&bounded, safe_offset, safe_limit);
             return Ok(RawReadResult {
@@ -704,18 +810,118 @@ fn looks_binary(bytes: &[u8]) -> bool {
     ratio > 0.30
 }
 
-async fn run_liteparse(path: &Path) -> Result<String> {
-    let output = match Command::new("lit")
-        .args(["parse", "--format", "text", "-q", &path.to_string_lossy()])
+fn pdf_page_range(page_start: Option<u32>, page_end: Option<u32>) -> Result<Option<PdfPageRange>> {
+    if page_start.is_none() && page_end.is_none() {
+        return Ok(None);
+    }
+
+    let start = page_start.unwrap_or(1);
+    let end = page_end.unwrap_or(start);
+    if start == 0 || end == 0 {
+        anyhow::bail!("PDF page_start/page_end are 1-indexed");
+    }
+    if end < start {
+        anyhow::bail!("PDF page_end must be greater than or equal to page_start");
+    }
+
+    Ok(Some(PdfPageRange { start, end }))
+}
+
+fn clamp_pdf_page_range(
+    range: Option<PdfPageRange>,
+    page_count: Option<u32>,
+) -> Result<Option<PdfPageRange>> {
+    let Some(range) = range else {
+        return Ok(None);
+    };
+
+    let Some(page_count) = page_count else {
+        return Ok(Some(range));
+    };
+
+    if range.start > page_count {
+        anyhow::bail!(
+            "PDF page_start {} exceeds page count {}",
+            range.start,
+            page_count
+        );
+    }
+
+    Ok(Some(PdfPageRange {
+        start: range.start,
+        end: range.end.min(page_count),
+    }))
+}
+
+async fn pdf_page_count(path: &Path) -> Result<u32> {
+    let output = match Command::new("pdfinfo")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output()
         .await
     {
         Ok(output) => output,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("'pdfinfo' not found in PATH; install poppler-utils")
+        }
+        Err(err) => return Err(err).context("failed to execute 'pdfinfo'"),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if !output.status.success() {
+        if stderr.is_empty() {
+            anyhow::bail!("pdfinfo failed");
+        }
+        anyhow::bail!("pdfinfo failed: {}", stderr);
+    }
+
+    for line in stdout.lines() {
+        let Some(raw_pages) = line.strip_prefix("Pages:") else {
+            continue;
+        };
+        let pages = raw_pages
+            .trim()
+            .parse::<u32>()
+            .with_context(|| format!("invalid pdfinfo Pages value '{}'", raw_pages.trim()))?;
+        if pages == 0 {
+            anyhow::bail!("pdfinfo reported zero pages");
+        }
+        return Ok(pages);
+    }
+
+    anyhow::bail!("pdfinfo did not report page count")
+}
+
+async fn run_liteparse(path: &Path, timeout_ms: u64, mem_limit_mb: u64) -> Result<String> {
+    let path_text = path.to_string_lossy().to_string();
+    let mut command = liteparse_command(&path_text, mem_limit_mb);
+    command
+        .kill_on_drop(true)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             anyhow::bail!("'lit' not found in PATH; install liteparse CLI")
         }
         Err(err) => return Err(err).context("failed to execute 'lit parse'"),
     };
+
+    let timeout_ms = timeout_ms.max(1);
+    let output =
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait_with_output())
+            .await
+        {
+            Ok(Ok(output)) => output,
+            Ok(Err(err)) => return Err(err).context("failed to wait for 'lit parse'"),
+            Err(_) => anyhow::bail!("lit parse timed out after {} ms", timeout_ms),
+        };
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -734,8 +940,54 @@ async fn run_liteparse(path: &Path) -> Result<String> {
     Ok(stdout)
 }
 
-async fn run_pdftotext(path: &Path) -> Result<String> {
-    let output = match Command::new("pdftotext").arg(path).arg("-").output().await {
+fn liteparse_command(path_text: &str, mem_limit_mb: u64) -> Command {
+    #[cfg(unix)]
+    {
+        if mem_limit_mb > 0 && command_exists("lit") && command_exists("systemd-run") {
+            let mut command = Command::new("systemd-run");
+            command.args([
+                "--user".to_string(),
+                "--scope".to_string(),
+                "--quiet".to_string(),
+                "--wait".to_string(),
+                "--collect".to_string(),
+                "-p".to_string(),
+                format!("MemoryMax={}M", mem_limit_mb),
+                "--".to_string(),
+                "lit".to_string(),
+                "parse".to_string(),
+                "--format".to_string(),
+                "text".to_string(),
+                "-q".to_string(),
+                path_text.to_string(),
+            ]);
+            return command;
+        }
+    }
+
+    let mut command = Command::new("lit");
+    command.args(["parse", "--format", "text", "-q", path_text]);
+    command
+}
+
+async fn run_pdftotext(path: &Path, range: Option<PdfPageRange>) -> Result<String> {
+    let mut command = Command::new("pdftotext");
+    command.arg("-layout");
+    if let Some(range) = range {
+        command
+            .arg("-f")
+            .arg(range.start.to_string())
+            .arg("-l")
+            .arg(range.end.to_string());
+    }
+    command
+        .arg(path)
+        .arg("-")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = match command.output().await {
         Ok(output) => output,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             anyhow::bail!("'pdftotext' not found in PATH; install poppler-utils")

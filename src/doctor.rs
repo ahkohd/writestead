@@ -127,6 +127,31 @@ pub async fn run(json_output: bool) -> Result<()> {
         },
     });
 
+    let pdfinfo = run_cmd("pdfinfo", &["-v"], 5).await;
+    checks.push(Check {
+        name: "pdfinfo_binary".to_string(),
+        ok: pdfinfo.ok,
+        detail: if pdfinfo.ok {
+            clean_line(&format!("{} {}", pdfinfo.stdout, pdfinfo.stderr))
+        } else {
+            "not found (PDF page-count routing disabled)".to_string()
+        },
+    });
+
+    #[cfg(unix)]
+    {
+        let systemd_run = run_cmd("systemd-run", &["--version"], 5).await;
+        checks.push(Check {
+            name: "systemd_run_binary".to_string(),
+            ok: systemd_run.ok,
+            detail: if systemd_run.ok {
+                clean_line(&format!("{} {}", systemd_run.stdout, systemd_run.stderr))
+            } else {
+                "not found (liteparse MemoryMax cap disabled)".to_string()
+            },
+        });
+    }
+
     checks.push(Check {
         name: "liteparse_formats".to_string(),
         ok: true,

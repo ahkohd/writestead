@@ -57,6 +57,10 @@ enum Commands {
         offset: usize,
         #[arg(long, default_value_t = 200)]
         limit: usize,
+        #[arg(long)]
+        page_start: Option<u32>,
+        #[arg(long)]
+        page_end: Option<u32>,
     },
     #[command(hide = true)]
     RawAdd {
@@ -157,6 +161,10 @@ enum RawCommands {
         offset: usize,
         #[arg(long, default_value_t = 200)]
         limit: usize,
+        #[arg(long)]
+        page_start: Option<u32>,
+        #[arg(long)]
+        page_end: Option<u32>,
     },
     Add {
         source: String,
@@ -195,7 +203,9 @@ async fn main() -> Result<()> {
             path,
             offset,
             limit,
-        } => cmd_raw_read(path, offset, limit).await,
+            page_start,
+            page_end,
+        } => cmd_raw_read(path, offset, limit, page_start, page_end).await,
         Commands::RawAdd {
             source,
             name,
@@ -318,7 +328,9 @@ async fn cmd_raw(command: RawCommands) -> Result<()> {
             path,
             offset,
             limit,
-        } => cmd_raw_read(path, offset, limit).await,
+            page_start,
+            page_end,
+        } => cmd_raw_read(path, offset, limit, page_start, page_end).await,
         RawCommands::Add {
             source,
             name,
@@ -335,10 +347,26 @@ fn cmd_raw_list(offset: usize, limit: usize) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_raw_read(path: String, offset: usize, limit: usize) -> Result<()> {
+async fn cmd_raw_read(
+    path: String,
+    offset: usize,
+    limit: usize,
+    page_start: Option<u32>,
+    page_end: Option<u32>,
+) -> Result<()> {
     let cfg = config::load_or_default()?;
     let raw = RawOps::new(cfg);
-    let result = raw.read_source(&path, offset, limit).await?;
+    let result = raw
+        .read_source_with_options(
+            &path,
+            writestead::raw::RawReadOptions {
+                offset,
+                limit,
+                page_start,
+                page_end,
+            },
+        )
+        .await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }

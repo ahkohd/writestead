@@ -49,6 +49,7 @@ pub fn build_state(config: crate::config::AppConfig) -> McpState {
     let tool_call_by_name = Arc::new(RwLock::new(HashMap::<String, u64>::new()));
     let tool_error_by_name = Arc::new(RwLock::new(HashMap::<String, u64>::new()));
     let raw_read_by_format = Arc::new(RwLock::new(HashMap::<String, u64>::new()));
+    let raw_read_failure_by_extractor = Arc::new(RwLock::new(HashMap::<String, u64>::new()));
     let wiki = Arc::new(WikiOps::new(config.clone()));
     let raw = Arc::new(RawOps::new(config.clone()));
 
@@ -68,6 +69,7 @@ pub fn build_state(config: crate::config::AppConfig) -> McpState {
         raw_upload_bytes_total: Arc::new(AtomicU64::new(0)),
         raw_read_count: Arc::new(AtomicU64::new(0)),
         raw_read_by_format,
+        raw_read_failure_by_extractor,
     }
 }
 
@@ -103,6 +105,7 @@ async fn health(State(state): State<McpState>) -> Json<serde_json::Value> {
         "raw_upload_bytes_total": state.raw_upload_bytes_total.load(Ordering::Relaxed),
         "raw_reads_total": state.raw_read_count.load(Ordering::Relaxed),
         "raw_reads_by_format": state.raw_read_by_format.read().await.clone(),
+        "raw_read_failures_by_extractor": state.raw_read_failure_by_extractor.read().await.clone(),
         "uptime_sec": state.started_at.elapsed().as_secs(),
         "version": env!("CARGO_PKG_VERSION"),
     }))
@@ -119,6 +122,7 @@ async fn metrics(State(state): State<McpState>) -> Response<String> {
     let raw_upload_bytes_total = state.raw_upload_bytes_total.load(Ordering::Relaxed);
     let raw_reads_total = state.raw_read_count.load(Ordering::Relaxed);
     let raw_reads_by_format = state.raw_read_by_format.read().await.clone();
+    let raw_read_failures_by_extractor = state.raw_read_failure_by_extractor.read().await.clone();
 
     let mut body = String::new();
 
@@ -214,6 +218,22 @@ async fn metrics(State(state): State<McpState>) -> Response<String> {
             body.push_str(&format!(
                 "writestead_raw_reads_by_format_total{{format=\"{}\"}} {}\n",
                 prometheus_escape_label(&format_name),
+                value
+            ));
+        }
+    }
+
+    body.push_str(
+        "# HELP writestead_raw_read_failures_by_extractor_total Raw read failures by extractor\n",
+    );
+    body.push_str("# TYPE writestead_raw_read_failures_by_extractor_total counter\n");
+    let mut extractor_names: Vec<String> = raw_read_failures_by_extractor.keys().cloned().collect();
+    extractor_names.sort();
+    for extractor in extractor_names {
+        if let Some(value) = raw_read_failures_by_extractor.get(&extractor) {
+            body.push_str(&format!(
+                "writestead_raw_read_failures_by_extractor_total{{extractor=\"{}\"}} {}\n",
+                prometheus_escape_label(&extractor),
                 value
             ));
         }

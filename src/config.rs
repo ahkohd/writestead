@@ -173,6 +173,12 @@ pub struct RawConfig {
     pub upload_max_bytes: u64,
     #[serde(default = "default_raw_url_timeout_seconds")]
     pub url_timeout_seconds: u64,
+    #[serde(default = "default_raw_pdf_liteparse_max_pages")]
+    pub pdf_liteparse_max_pages: u32,
+    #[serde(default = "default_raw_pdf_liteparse_timeout_ms")]
+    pub pdf_liteparse_timeout_ms: u64,
+    #[serde(default = "default_raw_pdf_liteparse_mem_limit_mb")]
+    pub pdf_liteparse_mem_limit_mb: u64,
 }
 
 impl Default for RawConfig {
@@ -180,6 +186,9 @@ impl Default for RawConfig {
         Self {
             upload_max_bytes: default_raw_upload_max_bytes(),
             url_timeout_seconds: default_raw_url_timeout_seconds(),
+            pdf_liteparse_max_pages: default_raw_pdf_liteparse_max_pages(),
+            pdf_liteparse_timeout_ms: default_raw_pdf_liteparse_timeout_ms(),
+            pdf_liteparse_mem_limit_mb: default_raw_pdf_liteparse_mem_limit_mb(),
         }
     }
 }
@@ -190,6 +199,18 @@ fn default_raw_upload_max_bytes() -> u64 {
 
 fn default_raw_url_timeout_seconds() -> u64 {
     30
+}
+
+fn default_raw_pdf_liteparse_max_pages() -> u32 {
+    30
+}
+
+fn default_raw_pdf_liteparse_timeout_ms() -> u64 {
+    60_000
+}
+
+fn default_raw_pdf_liteparse_mem_limit_mb() -> u64 {
+    4096
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,6 +342,15 @@ pub fn load_or_default() -> Result<AppConfig> {
     if cfg.raw.url_timeout_seconds == 0 {
         cfg.raw.url_timeout_seconds = default_raw_url_timeout_seconds();
     }
+    if cfg.raw.pdf_liteparse_max_pages == 0 {
+        cfg.raw.pdf_liteparse_max_pages = default_raw_pdf_liteparse_max_pages();
+    }
+    if cfg.raw.pdf_liteparse_timeout_ms == 0 {
+        cfg.raw.pdf_liteparse_timeout_ms = default_raw_pdf_liteparse_timeout_ms();
+    }
+    if cfg.raw.pdf_liteparse_mem_limit_mb == 0 {
+        cfg.raw.pdf_liteparse_mem_limit_mb = default_raw_pdf_liteparse_mem_limit_mb();
+    }
 
     Ok(cfg)
 }
@@ -369,8 +399,11 @@ pub fn get_value(cfg: &AppConfig, key: &str) -> Result<serde_json::Value> {
         "search.backend" => Ok(json!(cfg.search.backend.to_string())),
         "raw.upload_max_bytes" => Ok(json!(cfg.raw.upload_max_bytes)),
         "raw.url_timeout_seconds" => Ok(json!(cfg.raw.url_timeout_seconds)),
+        "raw.pdf_liteparse_max_pages" => Ok(json!(cfg.raw.pdf_liteparse_max_pages)),
+        "raw.pdf_liteparse_timeout_ms" => Ok(json!(cfg.raw.pdf_liteparse_timeout_ms)),
+        "raw.pdf_liteparse_mem_limit_mb" => Ok(json!(cfg.raw.pdf_liteparse_mem_limit_mb)),
         _ => Err(anyhow!(
-            "unknown config key '{}': use name|vault_path|host|port|sync.backend|mcp.auth.mode|mcp.session_ttl_seconds|search.backend|raw.upload_max_bytes|raw.url_timeout_seconds",
+            "unknown config key '{}': use name|vault_path|host|port|sync.backend|mcp.auth.mode|mcp.session_ttl_seconds|search.backend|raw.upload_max_bytes|raw.url_timeout_seconds|raw.pdf_liteparse_max_pages|raw.pdf_liteparse_timeout_ms|raw.pdf_liteparse_mem_limit_mb",
             key
         )),
     }
@@ -417,6 +450,33 @@ pub fn set_value(cfg: &mut AppConfig, key: &str, value: &str) -> Result<()> {
                 cfg.raw.url_timeout_seconds = default_raw_url_timeout_seconds();
             }
         }
+        "raw.pdf_liteparse_max_pages" => {
+            cfg.raw.pdf_liteparse_max_pages = value
+                .trim()
+                .parse::<u32>()
+                .with_context(|| format!("invalid raw.pdf_liteparse_max_pages '{}'", value))?;
+            if cfg.raw.pdf_liteparse_max_pages == 0 {
+                cfg.raw.pdf_liteparse_max_pages = default_raw_pdf_liteparse_max_pages();
+            }
+        }
+        "raw.pdf_liteparse_timeout_ms" => {
+            cfg.raw.pdf_liteparse_timeout_ms = value
+                .trim()
+                .parse::<u64>()
+                .with_context(|| format!("invalid raw.pdf_liteparse_timeout_ms '{}'", value))?;
+            if cfg.raw.pdf_liteparse_timeout_ms == 0 {
+                cfg.raw.pdf_liteparse_timeout_ms = default_raw_pdf_liteparse_timeout_ms();
+            }
+        }
+        "raw.pdf_liteparse_mem_limit_mb" => {
+            cfg.raw.pdf_liteparse_mem_limit_mb = value
+                .trim()
+                .parse::<u64>()
+                .with_context(|| format!("invalid raw.pdf_liteparse_mem_limit_mb '{}'", value))?;
+            if cfg.raw.pdf_liteparse_mem_limit_mb == 0 {
+                cfg.raw.pdf_liteparse_mem_limit_mb = default_raw_pdf_liteparse_mem_limit_mb();
+            }
+        }
         "mcp.auth.bearer_token" => {
             return Err(anyhow!(
                 "mcp.auth.bearer_token is disabled; use WRITESTEAD_BEARER_TOKEN env var"
@@ -424,7 +484,7 @@ pub fn set_value(cfg: &mut AppConfig, key: &str, value: &str) -> Result<()> {
         }
         _ => {
             return Err(anyhow!(
-                "unknown config key '{}': use name|vault_path|host|port|sync.backend|mcp.auth.mode|mcp.session_ttl_seconds|search.backend|raw.upload_max_bytes|raw.url_timeout_seconds",
+                "unknown config key '{}': use name|vault_path|host|port|sync.backend|mcp.auth.mode|mcp.session_ttl_seconds|search.backend|raw.upload_max_bytes|raw.url_timeout_seconds|raw.pdf_liteparse_max_pages|raw.pdf_liteparse_timeout_ms|raw.pdf_liteparse_mem_limit_mb",
                 key
             ))
         }
@@ -447,6 +507,15 @@ pub fn unset_value(cfg: &mut AppConfig, key: &str) -> Result<()> {
         "search.backend" => cfg.search.backend = defaults.search.backend,
         "raw.upload_max_bytes" => cfg.raw.upload_max_bytes = defaults.raw.upload_max_bytes,
         "raw.url_timeout_seconds" => cfg.raw.url_timeout_seconds = defaults.raw.url_timeout_seconds,
+        "raw.pdf_liteparse_max_pages" => {
+            cfg.raw.pdf_liteparse_max_pages = defaults.raw.pdf_liteparse_max_pages
+        }
+        "raw.pdf_liteparse_timeout_ms" => {
+            cfg.raw.pdf_liteparse_timeout_ms = defaults.raw.pdf_liteparse_timeout_ms
+        }
+        "raw.pdf_liteparse_mem_limit_mb" => {
+            cfg.raw.pdf_liteparse_mem_limit_mb = defaults.raw.pdf_liteparse_mem_limit_mb
+        }
         "mcp.auth.bearer_token" => {
             return Err(anyhow!(
                 "mcp.auth.bearer_token is disabled; use WRITESTEAD_BEARER_TOKEN env var"
@@ -454,7 +523,7 @@ pub fn unset_value(cfg: &mut AppConfig, key: &str) -> Result<()> {
         }
         _ => {
             return Err(anyhow!(
-                "unknown config key '{}': use name|vault_path|host|port|sync.backend|mcp.auth.mode|mcp.session_ttl_seconds|search.backend|raw.upload_max_bytes|raw.url_timeout_seconds",
+                "unknown config key '{}': use name|vault_path|host|port|sync.backend|mcp.auth.mode|mcp.session_ttl_seconds|search.backend|raw.upload_max_bytes|raw.url_timeout_seconds|raw.pdf_liteparse_max_pages|raw.pdf_liteparse_timeout_ms|raw.pdf_liteparse_mem_limit_mb",
                 key
             ))
         }
