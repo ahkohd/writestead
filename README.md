@@ -9,7 +9,7 @@ Inspired by [Karpathy's LLM OS wiki concept](https://gist.github.com/karpathy/44
 Writestead gives you:
 - **Structured wiki**: frontmatter, wikilinks, page types (source, entity, concept, analysis)
 - **Raw ingest**: add local files or URLs, extract text from PDF/DOCX/PPTX/images via liteparse
-- **MCP server**: expose wiki tools to any MCP client (Hermes, Claude Code, etc.)
+- **MCP server**: expose wiki tools to any MCP client.
 - **Obsidian sync**: headless Obsidian Sync via `ob` CLI
 - **Lint**: detect orphans, broken links, stale logs, duplicate titles, missing frontmatter
 
