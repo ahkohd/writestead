@@ -33,7 +33,7 @@ Optional tools (install any you need, `writestead doctor` checks availability):
 - [`lit`](https://github.com/run-llama/liteparse) — PDF/DOCX/PPTX/image text extraction
 - [`pdftotext`](https://poppler.freedesktop.org/) — PDF fallback
 - [`rg`](https://github.com/BurntSushi/ripgrep), [`fd`](https://github.com/sharkdp/fd) — faster search/listing
-- [`ob`](https://obsidian.md/sync) — headless Obsidian Sync
+- [`ob`](https://obsidian.md/help/sync/headless) — headless Obsidian Sync
 
 ## Quick start
 
