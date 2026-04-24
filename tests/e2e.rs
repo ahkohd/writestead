@@ -317,6 +317,17 @@ fn has_command(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn metric_value(metrics: &str, series: &str) -> Option<f64> {
+    metrics.lines().find_map(|line| {
+        let (name, value) = line.split_once(' ')?;
+        if name == series {
+            value.trim().parse::<f64>().ok()
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(unix)]
 fn write_fake_tool(path: &Path, body: &str) {
     fs::write(path, body).expect("write fake tool");
@@ -869,6 +880,15 @@ async fn wiki_sync_none_backend() {
     let mut client = TestClient::new(server.base_url());
     client.mcp_init().await;
 
+    let (_status, before_metrics) = TestClient::new(server.base_url()).get("/metrics").await;
+    let before_runs = metric_value(
+        &before_metrics,
+        "writestead_sync_runs_total{trigger=\"mcp\"}",
+    )
+    .unwrap_or(0.0);
+    let before_count =
+        metric_value(&before_metrics, "writestead_sync_duration_seconds_count").unwrap_or(0.0);
+
     let sync = tool_call(&mut client, "wiki_sync", json!({})).await;
     let payload = parse_tool_json(&sync);
     assert_eq!(payload["backend"], json!("none"));
@@ -876,6 +896,23 @@ async fn wiki_sync_none_backend() {
         .as_str()
         .unwrap_or_default()
         .contains("no-op"));
+
+    let (_status, metrics) = TestClient::new(server.base_url()).get("/metrics").await;
+    assert!(metrics.contains("# HELP writestead_sync_runs_total Total sync backend runs"));
+    assert!(metrics.contains("# TYPE writestead_sync_duration_seconds summary"));
+
+    let after_runs = metric_value(&metrics, "writestead_sync_runs_total{trigger=\"mcp\"}")
+        .expect("mcp sync runs metric");
+    let after_count = metric_value(&metrics, "writestead_sync_duration_seconds_count")
+        .expect("sync duration count metric");
+    assert!(
+        after_runs >= before_runs + 1.0,
+        "sync runs must increment: before={before_runs}, after={after_runs}"
+    );
+    assert!(
+        after_count >= before_count + 1.0,
+        "sync duration count must increment: before={before_count}, after={after_count}"
+    );
 
     server.shutdown().await;
 }

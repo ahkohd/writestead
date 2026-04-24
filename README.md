@@ -280,6 +280,10 @@ writestead_raw_uploads_total
 writestead_raw_upload_bytes_total
 writestead_raw_reads_total
 writestead_raw_reads_by_format_total{format="..."}
+writestead_sync_runs_total{trigger="..."}
+writestead_sync_errors_total{trigger="..."}
+writestead_sync_duration_seconds_sum
+writestead_sync_duration_seconds_count
 ```
 
 Alert suggestions:

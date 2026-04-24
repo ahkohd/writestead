@@ -475,7 +475,7 @@ fn cmd_index(offset: usize, limit: usize) -> Result<()> {
 
 async fn cmd_sync() -> Result<()> {
     let cfg = config::load_or_default()?;
-    let result = syncer::sync_once(&cfg).await?;
+    let result = syncer::sync_once_with_trigger(&cfg, "cli").await?;
     println!("sync backend: {}", result.backend);
     println!("{}", result.message);
     Ok(())

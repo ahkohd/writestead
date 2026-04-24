@@ -1,7 +1,7 @@
 use crate::config::{effective_mcp_auth_mode, effective_mcp_bearer_token, AppConfig, McpAuthMode};
 use crate::guide::wiki_help_text;
 use crate::raw::{RawOps, RawReadFailure, RawReadOptions};
-use crate::syncer::sync_once;
+use crate::syncer::sync_once_with_trigger;
 use crate::wiki::WikiOps;
 use anyhow::{Context, Result};
 use axum::body::Body;
@@ -809,7 +809,7 @@ async fn execute_tool(
             Ok(serde_json::to_value(page)?)
         }
         "wiki_sync" => {
-            let result = sync_once(&state.config).await?;
+            let result = sync_once_with_trigger(&state.config, "mcp").await?;
             Ok(json!({
                 "ok": true,
                 "backend": result.backend,

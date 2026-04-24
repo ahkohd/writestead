@@ -106,6 +106,7 @@ async fn health(State(state): State<McpState>) -> Json<serde_json::Value> {
         "raw_reads_total": state.raw_read_count.load(Ordering::Relaxed),
         "raw_reads_by_format": state.raw_read_by_format.read().await.clone(),
         "raw_read_failures_by_extractor": state.raw_read_failure_by_extractor.read().await.clone(),
+        "sync_metrics": crate::syncer::metrics_snapshot_json(),
         "uptime_sec": state.started_at.elapsed().as_secs(),
         "version": env!("CARGO_PKG_VERSION"),
     }))
@@ -123,6 +124,7 @@ async fn metrics(State(state): State<McpState>) -> Response<String> {
     let raw_reads_total = state.raw_read_count.load(Ordering::Relaxed);
     let raw_reads_by_format = state.raw_read_by_format.read().await.clone();
     let raw_read_failures_by_extractor = state.raw_read_failure_by_extractor.read().await.clone();
+    let sync_metrics = crate::syncer::metrics_snapshot();
 
     let mut body = String::new();
 
@@ -238,6 +240,46 @@ async fn metrics(State(state): State<McpState>) -> Response<String> {
             ));
         }
     }
+
+    body.push_str("# HELP writestead_sync_runs_total Total sync backend runs\n");
+    body.push_str("# TYPE writestead_sync_runs_total counter\n");
+    let mut sync_run_triggers: Vec<String> = sync_metrics.runs_by_trigger.keys().cloned().collect();
+    sync_run_triggers.sort();
+    for trigger in sync_run_triggers {
+        if let Some(value) = sync_metrics.runs_by_trigger.get(&trigger) {
+            body.push_str(&format!(
+                "writestead_sync_runs_total{{trigger=\"{}\"}} {}\n",
+                prometheus_escape_label(&trigger),
+                value
+            ));
+        }
+    }
+
+    body.push_str("# HELP writestead_sync_errors_total Total sync backend errors\n");
+    body.push_str("# TYPE writestead_sync_errors_total counter\n");
+    let mut sync_error_triggers: Vec<String> =
+        sync_metrics.errors_by_trigger.keys().cloned().collect();
+    sync_error_triggers.sort();
+    for trigger in sync_error_triggers {
+        if let Some(value) = sync_metrics.errors_by_trigger.get(&trigger) {
+            body.push_str(&format!(
+                "writestead_sync_errors_total{{trigger=\"{}\"}} {}\n",
+                prometheus_escape_label(&trigger),
+                value
+            ));
+        }
+    }
+
+    body.push_str("# HELP writestead_sync_duration_seconds Sync backend duration seconds\n");
+    body.push_str("# TYPE writestead_sync_duration_seconds summary\n");
+    body.push_str(&format!(
+        "writestead_sync_duration_seconds_sum {:.6}\n",
+        sync_metrics.duration_seconds_sum
+    ));
+    body.push_str(&format!(
+        "writestead_sync_duration_seconds_count {}\n",
+        sync_metrics.duration_seconds_count
+    ));
 
     axum::response::Response::builder()
         .header("content-type", "text/plain; version=0.0.4")
