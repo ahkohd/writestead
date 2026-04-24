@@ -37,11 +37,52 @@ Optional tools (install any you need, `writestead doctor` checks availability):
 
 ## Quick start
 
+### New vault (no existing Obsidian Sync)
+
 ```bash
 writestead init --vault-path ~/Documents/writestead --sync-backend obsidian
 writestead doctor
 writestead start
-writestead status
+```
+
+### Existing Obsidian Sync vault
+
+If you already have a vault syncing via Obsidian Sync, set up sync **before** init so existing files are preserved:
+
+```bash
+# 1. login and link to remote vault
+ob login
+ob sync-list-remote
+ob sync-setup --path ~/Documents/writestead --vault <vault-id>
+ob sync --path ~/Documents/writestead
+
+# 2. init without --force (skips files that already exist)
+writestead init --vault-path ~/Documents/writestead --sync-backend obsidian
+
+# 3. start
+writestead doctor
+writestead start
+```
+
+### Docker
+
+```bash
+docker run -d \
+  -v writestead-vault:/vault \
+  --name writestead \
+  ghcr.io/ahkohd/writestead:latest
+
+# setup sync inside container
+docker exec -it writestead bash
+ob login
+ob sync-list-remote
+ob sync-setup --path /vault --vault <vault-id>
+ob sync --path /vault
+writestead init --vault-path /vault --sync-backend obsidian
+exit
+
+# restart to pick up synced vault
+docker restart writestead
 ```
 
 ## Commands

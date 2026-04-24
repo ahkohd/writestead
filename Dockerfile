@@ -9,4 +9,5 @@ RUN apk add --no-cache \
 RUN npm install -g @ahkohd/writestead @llamaindex/liteparse obsidian-headless
 
 EXPOSE 8765
-CMD ["writestead", "start", "--foreground"]
+VOLUME /vault
+CMD ["writestead", "start", "--foreground", "--host", "0.0.0.0"]
