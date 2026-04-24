@@ -43,6 +43,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
       - name: Quality gates
         run: |
           cargo fmt --all -- --check
@@ -73,6 +79,12 @@ jobs:
           perl -0777 -i -pe 's/^version = ".*"/version = "'"$NEW_VERSION"'"/m' Cargo.toml
           cargo update --workspace
 
+      - name: Update npm package versions
+        run: node scripts/sync-npm-version.cjs "${{ steps.version.outputs.new }}"
+
+      - name: npm package dry run
+        run: npm pack --dry-run
+
       - name: Configure git
         if: ${{ !inputs.dry_run }}
         run: |
@@ -84,6 +96,8 @@ jobs:
         run: |
           BRANCH="${GITHUB_REF_NAME}"
           git add Cargo.toml Cargo.lock
+          git add package.json
+          git add npm/darwin-arm64/package.json npm/darwin-x64/package.json npm/linux-x64-gnu/package.json npm/win32-x64-msvc/package.json
           git commit -m "chore: release v${{ steps.version.outputs.new }}"
           git tag "v${{ steps.version.outputs.new }}"
           git push origin "HEAD:${BRANCH}"
@@ -108,8 +122,15 @@ jobs:
           echo "- Would commit, tag, and push v${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Would publish writestead crate to crates.io" >> "$GITHUB_STEP_SUMMARY"
           echo "- Would build release artifacts for macOS, Linux, and Windows" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Would publish npm packages:" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - @ahkohd/writestead-darwin-arm64@${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - @ahkohd/writestead-darwin-x64@${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - @ahkohd/writestead-linux-x64-gnu@${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - @ahkohd/writestead-win32-x64-msvc@${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "  - @ahkohd/writestead@${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Would create GitHub Release v${{ steps.version.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
           cargo publish --dry-run --allow-dirty --locked
+          npm publish --dry-run --access public
 
   build:
     name: Build (${{ matrix.target }})
@@ -156,6 +177,88 @@ jobs:
         with:
           name: writestead-${{ matrix.target }}
           path: writestead-${{ matrix.target }}.tar.gz
+
+  publish-npm:
+    name: Publish npm packages
+    needs: [release, build]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.release.outputs.version }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Stage npm packages
+        run: |
+          STAGE_DIR="${RUNNER_TEMP}/writestead-npm"
+          rm -rf "${STAGE_DIR}"
+          mkdir -p "${STAGE_DIR}"
+
+          mkdir -p "${STAGE_DIR}/main"
+          cp -R package.json README.md bin lib "${STAGE_DIR}/main"
+
+          mkdir -p "${STAGE_DIR}/darwin-arm64"
+          cp -R npm/darwin-arm64/. "${STAGE_DIR}/darwin-arm64"
+          rm -f "${STAGE_DIR}/darwin-arm64/bin/.gitkeep"
+          tar -xzf artifacts/writestead-aarch64-apple-darwin.tar.gz -C "${STAGE_DIR}/darwin-arm64/bin"
+          chmod +x "${STAGE_DIR}/darwin-arm64/bin/writestead"
+
+          mkdir -p "${STAGE_DIR}/darwin-x64"
+          cp -R npm/darwin-x64/. "${STAGE_DIR}/darwin-x64"
+          rm -f "${STAGE_DIR}/darwin-x64/bin/.gitkeep"
+          tar -xzf artifacts/writestead-x86_64-apple-darwin.tar.gz -C "${STAGE_DIR}/darwin-x64/bin"
+          chmod +x "${STAGE_DIR}/darwin-x64/bin/writestead"
+
+          mkdir -p "${STAGE_DIR}/linux-x64-gnu"
+          cp -R npm/linux-x64-gnu/. "${STAGE_DIR}/linux-x64-gnu"
+          rm -f "${STAGE_DIR}/linux-x64-gnu/bin/.gitkeep"
+          tar -xzf artifacts/writestead-x86_64-unknown-linux-gnu.tar.gz -C "${STAGE_DIR}/linux-x64-gnu/bin"
+          chmod +x "${STAGE_DIR}/linux-x64-gnu/bin/writestead"
+
+          mkdir -p "${STAGE_DIR}/win32-x64-msvc"
+          cp -R npm/win32-x64-msvc/. "${STAGE_DIR}/win32-x64-msvc"
+          rm -f "${STAGE_DIR}/win32-x64-msvc/bin/.gitkeep"
+          tar -xzf artifacts/writestead-x86_64-pc-windows-msvc.tar.gz -C "${STAGE_DIR}/win32-x64-msvc/bin"
+
+          echo "STAGE_DIR=${STAGE_DIR}" >> "$GITHUB_ENV"
+
+      - name: Verify npm auth
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish platform packages
+        run: |
+          npm publish "${STAGE_DIR}/darwin-arm64" --provenance --access public
+          npm publish "${STAGE_DIR}/darwin-x64" --provenance --access public
+          npm publish "${STAGE_DIR}/linux-x64-gnu" --provenance --access public
+          npm publish "${STAGE_DIR}/win32-x64-msvc" --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Wait for npm index
+        run: sleep 15
+
+      - name: Publish main package
+        run: npm publish "${STAGE_DIR}/main" --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish:
     name: Publish Release

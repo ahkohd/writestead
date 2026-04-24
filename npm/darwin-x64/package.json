@@ -1,0 +1,23 @@
+{
+  "name": "@ahkohd/writestead-darwin-x64",
+  "version": "0.1.3",
+  "description": "Prebuilt binaries for @ahkohd/writestead (darwin x64)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahkohd/writestead.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/writestead"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
