@@ -26,7 +26,8 @@ fn test_config(vault_path: &str) -> AppConfig {
 
 fn setup_raw() -> (TempDir, AppConfig, RawOps) {
     let dir = TempDir::new().expect("tempdir");
-    let cfg = test_config(dir.path().to_str().expect("path str"));
+    let mut cfg = test_config(dir.path().to_str().expect("path str"));
+    cfg.search.backend = writestead::config::SearchBackend::Builtin;
     vault::init_vault(&cfg, true).expect("init vault");
     let raw = RawOps::new(cfg.clone());
     (dir, cfg, raw)
@@ -226,7 +227,7 @@ async fn raw_read_pdf_page_range_uses_pdftotext_range() {
                 offset: 1,
                 limit: 20,
                 page_start: Some(5),
-                page_end: Some(7),
+                page_end: Some(45),
             },
         )
         .await
@@ -236,6 +237,238 @@ async fn raw_read_pdf_page_range_uses_pdftotext_range() {
 
     assert_eq!(read.extractor, "pdftotext");
     let args = fs::read_to_string(args_file).expect("args");
+    assert!(args.contains("-f 5"));
+    assert!(args.contains("-l 45"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn raw_read_small_pdf_page_range_uses_liteparse_slice() {
+    let _guard = env_lock().lock().await;
+    let old_path = std::env::var("PATH").unwrap_or_default();
+
+    let (dir, mut cfg, _raw) = setup_raw();
+    cfg.raw.pdf_liteparse_mem_limit_mb = 0;
+    let raw = RawOps::new(cfg);
+    let fake_bin = dir.path().join("bin");
+    fs::create_dir_all(&fake_bin).expect("fake bin");
+
+    let lit_args = dir.path().join("lit-args");
+    write_executable(
+        &fake_bin.join("pdfinfo"),
+        "#!/bin/sh\nprintf 'Pages:          300\\n'\n",
+    );
+    write_executable(
+        &fake_bin.join("pdfseparate"),
+        "#!/bin/sh\nstart=$2\nend=$4\npattern=$6\ni=$start\nwhile [ \"$i\" -le \"$end\" ]; do out=$(printf \"$pattern\" \"$i\"); printf 'page %s\\n' \"$i\" > \"$out\"; i=$((i + 1)); done\n",
+    );
+    write_executable(
+        &fake_bin.join("pdfunite"),
+        "#!/bin/sh\nfor last do :; done\nprintf 'slice\\n' > \"$last\"\n",
+    );
+    write_executable(
+        &fake_bin.join("lit"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'lite slice\\n'\n",
+            lit_args.display()
+        ),
+    );
+
+    std::env::set_var("PATH", format!("{}:{}", fake_bin.display(), old_path));
+    fs::write(dir.path().join("raw/manual.pdf"), b"%PDF test").expect("pdf");
+
+    let read = raw
+        .read_source_with_options(
+            "manual.pdf",
+            RawReadOptions {
+                offset: 1,
+                limit: 20,
+                page_start: Some(5),
+                page_end: Some(7),
+            },
+        )
+        .await
+        .expect("raw read");
+
+    std::env::set_var("PATH", old_path);
+
+    assert_eq!(read.extractor, "liteparse");
+    assert_eq!(read.content, "lite slice");
+    assert!(fs::read_to_string(lit_args)
+        .expect("lit args")
+        .contains("slice.pdf"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn raw_read_pdf_range_falls_back_when_pdfseparate_missing() {
+    let _guard = env_lock().lock().await;
+    let old_path = std::env::var("PATH").unwrap_or_default();
+
+    let (dir, mut cfg, _raw) = setup_raw();
+    cfg.raw.pdf_liteparse_mem_limit_mb = 0;
+    let raw = RawOps::new(cfg);
+    let fake_bin = dir.path().join("bin");
+    fs::create_dir_all(&fake_bin).expect("fake bin");
+
+    let pdftotext_args = dir.path().join("pdftotext-args");
+    let lit_marker = dir.path().join("lit-called");
+    write_executable(
+        &fake_bin.join("pdfinfo"),
+        "#!/bin/sh\nprintf 'Pages:          300\\n'\n",
+    );
+    write_executable(
+        &fake_bin.join("pdftotext"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'fallback text\\n'\n",
+            pdftotext_args.display()
+        ),
+    );
+    write_executable(
+        &fake_bin.join("lit"),
+        &format!(
+            "#!/bin/sh\ntouch '{}'\nprintf 'lit text\\n'\n",
+            lit_marker.display()
+        ),
+    );
+
+    std::env::set_var("PATH", fake_bin.display().to_string());
+    fs::write(dir.path().join("raw/manual.pdf"), b"%PDF test").expect("pdf");
+
+    let read = raw
+        .read_source_with_options(
+            "manual.pdf",
+            RawReadOptions {
+                offset: 1,
+                limit: 20,
+                page_start: Some(5),
+                page_end: Some(7),
+            },
+        )
+        .await
+        .expect("raw read");
+
+    std::env::set_var("PATH", old_path);
+
+    assert_eq!(read.extractor, "pdftotext");
+    assert_eq!(read.content, "fallback text");
+    assert!(!lit_marker.exists(), "lit must not run when split fails");
+    let args = fs::read_to_string(pdftotext_args).expect("pdftotext args");
+    assert!(args.contains("-f 5"));
+    assert!(args.contains("-l 7"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn raw_read_pdf_range_falls_back_when_pdfunite_missing() {
+    let _guard = env_lock().lock().await;
+    let old_path = std::env::var("PATH").unwrap_or_default();
+
+    let (dir, mut cfg, _raw) = setup_raw();
+    cfg.raw.pdf_liteparse_mem_limit_mb = 0;
+    let raw = RawOps::new(cfg);
+    let fake_bin = dir.path().join("bin");
+    fs::create_dir_all(&fake_bin).expect("fake bin");
+
+    let pdftotext_args = dir.path().join("pdftotext-args");
+    write_executable(
+        &fake_bin.join("pdfinfo"),
+        "#!/bin/sh\nprintf 'Pages:          300\\n'\n",
+    );
+    write_executable(
+        &fake_bin.join("pdfseparate"),
+        "#!/bin/sh\nstart=$2\nend=$4\npattern=$6\ni=$start\nwhile [ \"$i\" -le \"$end\" ]; do out=$(printf \"$pattern\" \"$i\"); printf 'page %s\\n' \"$i\" > \"$out\"; i=$((i + 1)); done\n",
+    );
+    write_executable(
+        &fake_bin.join("pdftotext"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'fallback text\\n'\n",
+            pdftotext_args.display()
+        ),
+    );
+
+    std::env::set_var("PATH", fake_bin.display().to_string());
+    fs::write(dir.path().join("raw/manual.pdf"), b"%PDF test").expect("pdf");
+
+    let read = raw
+        .read_source_with_options(
+            "manual.pdf",
+            RawReadOptions {
+                offset: 1,
+                limit: 20,
+                page_start: Some(5),
+                page_end: Some(7),
+            },
+        )
+        .await
+        .expect("raw read");
+
+    std::env::set_var("PATH", old_path);
+
+    assert_eq!(read.extractor, "pdftotext");
+    let args = fs::read_to_string(pdftotext_args).expect("pdftotext args");
+    assert!(args.contains("-f 5"));
+    assert!(args.contains("-l 7"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn raw_read_pdf_range_liteparse_timeout_falls_back_to_original_range() {
+    let _guard = env_lock().lock().await;
+    let old_path = std::env::var("PATH").unwrap_or_default();
+
+    let (dir, mut cfg, _raw) = setup_raw();
+    cfg.raw.pdf_liteparse_timeout_ms = 100;
+    cfg.raw.pdf_liteparse_mem_limit_mb = 0;
+    let raw = RawOps::new(cfg);
+    let fake_bin = dir.path().join("bin");
+    fs::create_dir_all(&fake_bin).expect("fake bin");
+
+    let pdftotext_args = dir.path().join("pdftotext-args");
+    write_executable(
+        &fake_bin.join("pdfinfo"),
+        "#!/bin/sh\nprintf 'Pages:          300\\n'\n",
+    );
+    write_executable(
+        &fake_bin.join("pdfseparate"),
+        "#!/bin/sh\nstart=$2\nend=$4\npattern=$6\ni=$start\nwhile [ \"$i\" -le \"$end\" ]; do out=$(printf \"$pattern\" \"$i\"); printf 'page %s\\n' \"$i\" > \"$out\"; i=$((i + 1)); done\n",
+    );
+    write_executable(
+        &fake_bin.join("pdfunite"),
+        "#!/bin/sh\nfor last do :; done\nprintf 'slice\\n' > \"$last\"\n",
+    );
+    write_executable(
+        &fake_bin.join("lit"),
+        "#!/bin/sh\n/bin/sleep 2\nprintf 'late\\n'\n",
+    );
+    write_executable(
+        &fake_bin.join("pdftotext"),
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'fallback text\\n'\n",
+            pdftotext_args.display()
+        ),
+    );
+
+    std::env::set_var("PATH", fake_bin.display().to_string());
+    fs::write(dir.path().join("raw/manual.pdf"), b"%PDF test").expect("pdf");
+
+    let read = raw
+        .read_source_with_options(
+            "manual.pdf",
+            RawReadOptions {
+                offset: 1,
+                limit: 20,
+                page_start: Some(5),
+                page_end: Some(7),
+            },
+        )
+        .await
+        .expect("raw read");
+
+    std::env::set_var("PATH", old_path);
+
+    assert_eq!(read.extractor, "pdftotext");
+    let args = fs::read_to_string(pdftotext_args).expect("pdftotext args");
     assert!(args.contains("-f 5"));
     assert!(args.contains("-l 7"));
 }

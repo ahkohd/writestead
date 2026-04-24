@@ -138,6 +138,28 @@ pub async fn run(json_output: bool) -> Result<()> {
         },
     });
 
+    let pdfseparate = run_cmd("pdfseparate", &["-v"], 5).await;
+    checks.push(Check {
+        name: "pdfseparate_binary".to_string(),
+        ok: pdfseparate.ok,
+        detail: if pdfseparate.ok {
+            clean_line(&format!("{} {}", pdfseparate.stdout, pdfseparate.stderr))
+        } else {
+            "not found (page-range liteparse disabled)".to_string()
+        },
+    });
+
+    let pdfunite = run_cmd("pdfunite", &["-v"], 5).await;
+    checks.push(Check {
+        name: "pdfunite_binary".to_string(),
+        ok: pdfunite.ok,
+        detail: if pdfunite.ok {
+            clean_line(&format!("{} {}", pdfunite.stdout, pdfunite.stderr))
+        } else {
+            "not found (page-range liteparse disabled)".to_string()
+        },
+    });
+
     #[cfg(unix)]
     {
         let systemd_run = run_cmd("systemd-run", &["--version"], 5).await;

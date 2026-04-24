@@ -339,6 +339,14 @@ fn doctor_path_with_fake_deps(dir: &Path) -> String {
             "#!/bin/sh\nprintf 'pdfinfo fake\\n'\n",
         );
         write_fake_tool(
+            &fake_bin.join("pdfseparate"),
+            "#!/bin/sh\nprintf 'pdfseparate fake\\n'\n",
+        );
+        write_fake_tool(
+            &fake_bin.join("pdfunite"),
+            "#!/bin/sh\nprintf 'pdfunite fake\\n'\n",
+        );
+        write_fake_tool(
             &fake_bin.join("systemd-run"),
             "#!/bin/sh\nprintf 'systemd fake\\n'\n",
         );
@@ -1326,6 +1334,8 @@ async fn doctor_includes_extractor_checks() {
     assert!(names.contains(&"liteparse_binary".to_string()));
     assert!(names.contains(&"pdftotext_binary".to_string()));
     assert!(names.contains(&"pdfinfo_binary".to_string()));
+    assert!(names.contains(&"pdfseparate_binary".to_string()));
+    assert!(names.contains(&"pdfunite_binary".to_string()));
     #[cfg(unix)]
     assert!(names.contains(&"systemd_run_binary".to_string()));
 }

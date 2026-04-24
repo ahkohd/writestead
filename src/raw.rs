@@ -68,6 +68,17 @@ struct PdfPageRange {
     end: u32,
 }
 
+impl PdfPageRange {
+    fn len(self) -> u32 {
+        self.end.saturating_sub(self.start).saturating_add(1)
+    }
+}
+
+struct PdfSlice {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
 #[derive(Debug)]
 pub struct RawReadFailure {
     extractor: &'static str,
@@ -271,14 +282,52 @@ impl RawOps {
             let range = clamp_pdf_page_range(requested_range, page_count)?;
 
             let max_liteparse_pages = self.config.raw.pdf_liteparse_max_pages.max(1);
-            let should_use_liteparse = range.is_none()
-                && page_count
-                    .map(|pages| pages <= max_liteparse_pages)
-                    .unwrap_or(true);
+            let effective_pages = range.or_else(|| {
+                page_count.map(|pages| PdfPageRange {
+                    start: 1,
+                    end: pages,
+                })
+            });
+            let should_use_liteparse = effective_pages
+                .map(|pages| pages.len() <= max_liteparse_pages)
+                .unwrap_or(true);
 
             let (parsed, extractor) = if should_use_liteparse {
+                let liteparse_slice = if let Some(range) = range {
+                    match extract_pdf_range(&full, range).await {
+                        Ok(slice) => Some(slice),
+                        Err(err) => {
+                            tracing::warn!(
+                                "failed to extract PDF range {}-{} from {}; falling back to pdftotext: {}",
+                                range.start,
+                                range.end,
+                                full.display(),
+                                err
+                            );
+                            let text = run_pdftotext(&full, Some(range))
+                                .await
+                                .map_err(|err| raw_read_failure("pdftotext", err))?;
+                            return Ok(pdf_read_result(
+                                path_out,
+                                meta.len(),
+                                text,
+                                "pdftotext",
+                                safe_offset,
+                                safe_limit,
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let target = liteparse_slice
+                    .as_ref()
+                    .map(|slice| slice.path.as_path())
+                    .unwrap_or(full.as_path());
+
                 match run_liteparse(
-                    &full,
+                    target,
                     self.config.raw.pdf_liteparse_timeout_ms,
                     self.config.raw.pdf_liteparse_mem_limit_mb,
                 )
@@ -288,7 +337,7 @@ impl RawOps {
                     Err(err) => {
                         tracing::warn!(
                             "liteparse failed for {}; falling back to pdftotext: {}",
-                            full.display(),
+                            target.display(),
                             err
                         );
                         (
@@ -896,6 +945,90 @@ async fn pdf_page_count(path: &Path) -> Result<u32> {
     anyhow::bail!("pdfinfo did not report page count")
 }
 
+async fn extract_pdf_range(path: &Path, range: PdfPageRange) -> Result<PdfSlice> {
+    let tmp = tempfile::Builder::new()
+        .prefix("writestead-pdf-")
+        .tempdir()
+        .context("failed to create PDF slice temp dir")?;
+    let pattern = tmp.path().join("page-%d.pdf");
+
+    let separate = match Command::new("pdfseparate")
+        .arg("-f")
+        .arg(range.start.to_string())
+        .arg("-l")
+        .arg(range.end.to_string())
+        .arg(path)
+        .arg(&pattern)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("'pdfseparate' not found in PATH; install poppler-utils")
+        }
+        Err(err) => return Err(err).context("failed to execute 'pdfseparate'"),
+    };
+
+    if !separate.status.success() {
+        let stderr = String::from_utf8_lossy(&separate.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("pdfseparate failed");
+        }
+        anyhow::bail!("pdfseparate failed: {}", stderr);
+    }
+
+    // Poppler pdfseparate expands %d without zero padding.
+    let pages: Vec<PathBuf> = (range.start..=range.end)
+        .map(|page| tmp.path().join(format!("page-{}.pdf", page)))
+        .collect();
+    for page in &pages {
+        if !page.exists() {
+            anyhow::bail!("pdfseparate did not produce {}", page.display());
+        }
+    }
+
+    let slice_path = tmp.path().join("slice.pdf");
+    let mut unite_cmd = Command::new("pdfunite");
+    for page in &pages {
+        unite_cmd.arg(page);
+    }
+    unite_cmd.arg(&slice_path);
+
+    let unite = match unite_cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("'pdfunite' not found in PATH; install poppler-utils")
+        }
+        Err(err) => return Err(err).context("failed to execute 'pdfunite'"),
+    };
+
+    if !unite.status.success() {
+        let stderr = String::from_utf8_lossy(&unite.stderr).trim().to_string();
+        if stderr.is_empty() {
+            anyhow::bail!("pdfunite failed");
+        }
+        anyhow::bail!("pdfunite failed: {}", stderr);
+    }
+
+    if !slice_path.exists() {
+        anyhow::bail!("pdfunite did not produce {}", slice_path.display());
+    }
+
+    Ok(PdfSlice {
+        _dir: tmp,
+        path: slice_path,
+    })
+}
+
 async fn run_liteparse(path: &Path, timeout_ms: u64, mem_limit_mb: u64) -> Result<String> {
     let path_text = path.to_string_lossy().to_string();
     let mut command = liteparse_command(&path_text, mem_limit_mb);
@@ -1036,6 +1169,29 @@ fn paginate_lines(text: &str, offset: usize, limit: usize) -> PageChunk {
         limit: safe_limit,
         total_lines,
         has_more: end < total_lines,
+    }
+}
+
+fn pdf_read_result(
+    path: String,
+    size_bytes: u64,
+    text: String,
+    extractor: &str,
+    offset: usize,
+    limit: usize,
+) -> RawReadResult {
+    let bounded = clamp_text(text);
+    let page = paginate_lines(&bounded, offset, limit);
+    RawReadResult {
+        path,
+        size_bytes,
+        content: page.content,
+        format: "parsed".to_string(),
+        extractor: extractor.to_string(),
+        offset: page.offset,
+        limit: page.limit,
+        total_lines: page.total_lines,
+        has_more: page.has_more,
     }
 }
 

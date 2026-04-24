@@ -52,6 +52,8 @@ fn doctor_includes_extractor_and_accelerator_checks() {
     assert!(names.contains(&"liteparse_binary"));
     assert!(names.contains(&"pdftotext_binary"));
     assert!(names.contains(&"pdfinfo_binary"));
+    assert!(names.contains(&"pdfseparate_binary"));
+    assert!(names.contains(&"pdfunite_binary"));
     #[cfg(unix)]
     assert!(names.contains(&"systemd_run_binary"));
     assert!(names.contains(&"liteparse_formats"));
