@@ -1,6 +1,6 @@
 {
   "name": "@ahkohd/writestead-win32-x64-msvc",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Prebuilt binaries for @ahkohd/writestead (win32 x64 msvc)",
   "license": "MIT",
   "repository": {
