@@ -350,17 +350,17 @@ impl WikiOps {
         unindexed_pages.sort_by(|a, b| a.path.cmp(&b.path));
         duplicate_index_entries.sort_by(|a, b| a.slug.cmp(&b.slug));
         missing_index_sections.sort_by(|a, b| a.section.cmp(&b.section));
-        stale_index_mixed_bullet.sort_by(|a, b| a.line.cmp(&b.line));
+        stale_index_mixed_bullet.sort_by_key(|item| item.line);
         duplicate_index_sections.sort_by(|a, b| a.section.cmp(&b.section));
-        foreign_index_content.sort_by(|a, b| a.line.cmp(&b.line));
+        foreign_index_content.sort_by_key(|item| item.line);
         let mut foreign_log_content = log_validation.foreign_content;
         let mut malformed_log_entries = log_validation.malformed_entries;
         let mut out_of_order_log_entries = log_validation.out_of_order_entries;
         let mut duplicate_log_entries = log_validation.duplicate_entries;
         let log_entry_count = log_validation.entry_count;
-        foreign_log_content.sort_by(|a, b| a.line.cmp(&b.line));
-        malformed_log_entries.sort_by(|a, b| a.line.cmp(&b.line));
-        out_of_order_log_entries.sort_by(|a, b| a.line.cmp(&b.line));
+        foreign_log_content.sort_by_key(|item| item.line);
+        malformed_log_entries.sort_by_key(|item| item.line);
+        out_of_order_log_entries.sort_by_key(|item| item.line);
         duplicate_log_entries.sort();
         fixes_applied.sort_by(|a, b| a.path.cmp(&b.path).then(a.kind.cmp(&b.kind)));
 
