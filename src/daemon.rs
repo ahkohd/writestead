@@ -135,6 +135,7 @@ pub fn cleanup_pid_file_if_current_process() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 pub fn process_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
@@ -151,6 +152,33 @@ pub fn process_alive(pid: i32) -> bool {
     )
 }
 
+#[cfg(windows)]
+pub fn process_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+
+    let output = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return false;
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.trim();
+
+    !line.is_empty() && !line.contains("No tasks are running")
+}
+
+#[cfg(unix)]
 pub fn stop_process(pid: i32) -> Result<()> {
     if pid <= 0 {
         return Ok(());
@@ -166,6 +194,41 @@ pub fn stop_process(pid: i32) -> Result<()> {
     }
 
     let _ = send_signal(pid, libc::SIGKILL)?;
+
+    for _ in 0..10 {
+        if !process_alive(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(anyhow!("failed to stop pid {}", pid))
+}
+
+#[cfg(windows)]
+pub fn stop_process(pid: i32) -> Result<()> {
+    if pid <= 0 {
+        return Ok(());
+    }
+
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    for _ in 0..20 {
+        if !process_alive(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    let _ = Command::new("taskkill")
+        .args(["/F", "/PID", &pid.to_string(), "/T"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 
     for _ in 0..10 {
         if !process_alive(pid) {
@@ -220,6 +283,7 @@ pub async fn fetch_health_raw(host: &str, port: u16) -> Result<Option<Value>> {
     Ok(parsed)
 }
 
+#[cfg(unix)]
 fn send_signal(pid: i32, signal: i32) -> Result<bool> {
     let rc = unsafe { libc::kill(pid, signal) };
     if rc == 0 {
