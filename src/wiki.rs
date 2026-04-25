@@ -729,9 +729,16 @@ pub(crate) fn title_from_path(path: &str) -> String {
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut output, "{byte:02x}").expect("write to string failed");
+    }
+    output
 }
 
 pub(crate) fn strip_markdown_code(text: &str) -> String {
