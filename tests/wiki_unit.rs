@@ -577,7 +577,47 @@ fn lint_migrates_legacy_and_missing_index_h1() {
     })
     .expect("fix missing h1");
     let index = fs::read_to_string(dir.path().join("wiki/index.md")).expect("index");
-    assert!(index.contains("# Wiki Index\n## Entities"));
+    assert!(index.contains("# Wiki Index\n\n## Entities"));
+}
+
+#[test]
+fn lint_fix_compacts_index_blank_lines() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    fs::write(
+        dir.path().join("wiki/entities/mws.md"),
+        sample_page("MWS", "body"),
+    )
+    .expect("write mws");
+    fs::write(
+        dir.path().join("wiki/entities/mcpstead.md"),
+        sample_page("mcpstead", "body"),
+    )
+    .expect("write mcpstead");
+    fs::write(
+        dir.path().join("wiki/concepts/rclone.md"),
+        "---\ntitle: rclone\ntype: concept\ncreated: 2026-04-25\nupdated: 2026-04-25\ntags: [storage]\n---\n\n# rclone\n",
+    )
+    .expect("write rclone");
+    fs::write(
+        dir.path().join("wiki/index.md"),
+        "---\ntitle: Index\ntype: index\n---\n\n\n# Index\n\n\n## Entities\n\n\n### Services\n\n\n- [[mws|MWS]]   \n\n\n- [[mcpstead]]\n\n\n## Concepts\n\n\n- [[rclone]]\n\n",
+    )
+    .expect("write index");
+
+    let fixed = wiki
+        .lint_with_options(LintOptions {
+            fix: true,
+            dry_run: false,
+        })
+        .expect("fix index");
+    assert!(fixed
+        .fixes_applied
+        .iter()
+        .any(|fix| { fix.path == "wiki/index.md" && fix.kind == "fix_index_compact_whitespace" }));
+
+    let expected = "---\ntitle: Index\ntype: index\n---\n\n# Wiki Index\n\n## Entities\n\n### Services\n\n- [[mws|MWS]]\n- [[mcpstead]]\n\n## Concepts\n\n- [[rclone]]\n";
+    let actual = fs::read_to_string(dir.path().join("wiki/index.md")).expect("fixed index");
+    assert_eq!(actual, expected);
 }
 
 #[test]

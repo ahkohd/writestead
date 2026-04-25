@@ -570,6 +570,14 @@ impl WikiOps {
             });
         }
 
+        if let Some(updated) = fix_index_compact_whitespace_text(&text) {
+            text = updated;
+            fixes.push(LintFix {
+                path: "wiki/index.md".to_string(),
+                kind: "fix_index_compact_whitespace".to_string(),
+            });
+        }
+
         if !fixes.is_empty() && !dry_run {
             fs::write(&index_path, text)
                 .with_context(|| format!("failed to write {}", index_path.display()))?;
@@ -754,6 +762,61 @@ fn validate_index_grammar(text: &str) -> Vec<ForeignIndexContent> {
     }
 
     foreign
+}
+
+fn fix_index_compact_whitespace_text(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut index = 0usize;
+    let mut out = Vec::new();
+
+    if lines.first() == Some(&"---") {
+        while index < lines.len() {
+            let line = lines[index].trim_end_matches([' ', '\t']);
+            out.push(line.to_string());
+            index += 1;
+            if index > 1 && line == "---" {
+                break;
+            }
+        }
+    }
+
+    while index < lines.len() && lines[index].trim().is_empty() {
+        index += 1;
+    }
+
+    if index >= lines.len() || !matches!(lines[index].trim(), "# Wiki Index" | "# Index") {
+        return None;
+    }
+    index += 1;
+
+    if !out.is_empty() {
+        out.push(String::new());
+    }
+    out.push("# Wiki Index".to_string());
+
+    for line in lines[index..]
+        .iter()
+        .map(|line| line.trim_end_matches([' ', '\t']))
+        .filter(|line| !line.trim().is_empty())
+    {
+        let is_heading = line.starts_with("## ") || line.starts_with("### ");
+        let previous_is_heading = out
+            .iter()
+            .rev()
+            .find(|line| !line.is_empty())
+            .map(|line| line.starts_with('#'))
+            .unwrap_or(false);
+        if (is_heading || previous_is_heading)
+            && !out.last().map(|line| line.is_empty()).unwrap_or(false)
+        {
+            out.push(String::new());
+        }
+        out.push(line.to_string());
+    }
+
+    let mut updated = out.join("\n");
+    updated.push('\n');
+    (updated != text).then_some(updated)
 }
 
 fn fix_index_yank_foreign_text(text: &str) -> Option<String> {
