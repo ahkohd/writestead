@@ -445,6 +445,35 @@ fn lint_fix_compacts_log_blank_lines() {
 }
 
 #[test]
+fn lint_reports_formatting_issues_without_fixing() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    let log =
+        "---\ntitle: Log\ntype: log\n---\n\n\n# Wiki Log\n\n\n## [2026-04-06] update | first\n\n";
+    let index = "---\ntitle: Index\ntype: index\n---\n\n\n# Index\n\n\n## Entities\n\n";
+    fs::write(dir.path().join("wiki/log.md"), log).expect("write log");
+    fs::write(dir.path().join("wiki/index.md"), index).expect("write index");
+
+    let report = wiki.lint().expect("lint");
+    assert!(report.fixes_applied.is_empty());
+    assert!(report
+        .formatting_issues
+        .iter()
+        .any(|fix| { fix.path == "wiki/log.md" && fix.kind == "fix_log_compact_whitespace" }));
+    assert!(report
+        .formatting_issues
+        .iter()
+        .any(|fix| { fix.path == "wiki/index.md" && fix.kind == "fix_index_compact_whitespace" }));
+    assert_eq!(
+        fs::read_to_string(dir.path().join("wiki/log.md")).expect("read log"),
+        log
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("wiki/index.md")).expect("read index"),
+        index
+    );
+}
+
+#[test]
 fn lint_reports_and_fixes_unindexed_pages() {
     let (dir, _cfg, wiki) = setup_wiki();
     fs::write(

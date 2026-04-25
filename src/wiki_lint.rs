@@ -162,6 +162,7 @@ pub struct LintReport {
     pub out_of_order_log_entries: Vec<LogOrderIssue>,
     pub duplicate_log_entries: Vec<String>,
     pub log_entry_count: usize,
+    pub formatting_issues: Vec<LintFix>,
     pub fixes_applied: Vec<LintFix>,
 }
 
@@ -360,10 +361,12 @@ impl WikiOps {
         let mut out_of_order_log_entries = log_validation.out_of_order_entries;
         let mut duplicate_log_entries = log_validation.duplicate_entries;
         let log_entry_count = log_validation.entry_count;
+        let mut formatting_issues = detect_formatting_issues(&pages);
         foreign_log_content.sort_by_key(|item| item.line);
         malformed_log_entries.sort_by_key(|item| item.line);
         out_of_order_log_entries.sort_by_key(|item| item.line);
         duplicate_log_entries.sort();
+        formatting_issues.sort_by(|a, b| a.path.cmp(&b.path).then(a.kind.cmp(&b.kind)));
         fixes_applied.sort_by(|a, b| a.path.cmp(&b.path).then(a.kind.cmp(&b.kind)));
 
         Ok(LintReport {
@@ -388,6 +391,7 @@ impl WikiOps {
             out_of_order_log_entries,
             duplicate_log_entries,
             log_entry_count,
+            formatting_issues,
             fixes_applied,
         })
     }
@@ -762,6 +766,45 @@ fn validate_index_grammar(text: &str) -> Vec<ForeignIndexContent> {
     }
 
     foreign
+}
+
+fn detect_formatting_issues(pages: &HashMap<String, String>) -> Vec<LintFix> {
+    let mut issues = Vec::new();
+
+    if let Some(text) = pages.get("wiki/index.md") {
+        if fix_index_compact_whitespace_text(text).is_some() {
+            issues.push(LintFix {
+                path: "wiki/index.md".to_string(),
+                kind: "fix_index_compact_whitespace".to_string(),
+            });
+        }
+    }
+
+    if let Some(text) = pages.get("wiki/log.md") {
+        let (_, fixes) = fix_log_text(text);
+        issues.extend(
+            fixes
+                .into_iter()
+                .filter(|kind| is_formatting_fix(kind))
+                .map(|kind| LintFix {
+                    path: "wiki/log.md".to_string(),
+                    kind,
+                }),
+        );
+    }
+
+    issues
+}
+
+fn is_formatting_fix(kind: &str) -> bool {
+    matches!(
+        kind,
+        "fix_log_action_case"
+            | "fix_log_compact_whitespace"
+            | "fix_log_date_padding"
+            | "fix_log_space_after_date"
+            | "fix_log_trailing_whitespace"
+    )
 }
 
 fn fix_index_compact_whitespace_text(text: &str) -> Option<String> {
