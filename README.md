@@ -1,6 +1,6 @@
 # writestead
 
-[![CI](https://github.com/ahkohd/writestead/actions/workflows/ci.yml/badge.svg)](https://github.com/ahkohd/writestead/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/@ahkohd/writestead.svg)](https://www.npmjs.com/package/@ahkohd/writestead) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/ahkohd/writestead/actions/workflows/ci.yml/badge.svg)](https://github.com/ahkohd/writestead/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/@ahkohd/writestead.svg)](https://www.npmjs.com/package/@ahkohd/writestead) [![Crates.io](https://img.shields.io/crates/v/writestead.svg)](https://crates.io/crates/writestead) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 LLM Wiki
 
