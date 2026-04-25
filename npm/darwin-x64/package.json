@@ -1,6 +1,6 @@
 {
   "name": "@ahkohd/writestead-darwin-x64",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Prebuilt binaries for @ahkohd/writestead (darwin x64)",
   "license": "MIT",
   "repository": {
