@@ -348,7 +348,7 @@ jobs:
           mkdir -p Formula
           cat > Formula/writestead.rb << 'FORMULA'
           class Writestead < Formula
-            desc "CLI-first personal wiki engine with MCP support"
+            desc "LLM Wiki"
             homepage "https://github.com/ahkohd/writestead"
             version "VERSION_PLACEHOLDER"
             license "MIT"
