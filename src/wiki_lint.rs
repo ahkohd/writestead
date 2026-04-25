@@ -477,6 +477,8 @@ impl WikiOps {
             }
         }
 
+        fixes.extend(self.apply_page_format_fixes(dry_run)?);
+
         for entry in WalkDir::new(&root)
             .into_iter()
             .filter_map(|entry| entry.ok())
@@ -505,6 +507,39 @@ impl WikiOps {
         }
 
         fixes.extend(self.apply_index_fixes(dry_run)?);
+
+        Ok(fixes)
+    }
+
+    fn apply_page_format_fixes(&self, dry_run: bool) -> Result<Vec<LintFix>> {
+        let root = self.root();
+        let mut fixes = Vec::new();
+
+        for entry in WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.file_type().is_file() && entry.file_name().to_string_lossy().ends_with(".md")
+            })
+        {
+            let rel = self.to_rel_path(entry.path());
+            if !is_page_format_scope(&rel) {
+                continue;
+            }
+            let text = fs::read_to_string(entry.path()).unwrap_or_default();
+            let (updated, page_fixes) = fix_page_whitespace_text(&text);
+            if page_fixes.is_empty() {
+                continue;
+            }
+            if !dry_run {
+                fs::write(entry.path(), updated)
+                    .with_context(|| format!("failed to write {}", entry.path().display()))?;
+            }
+            fixes.extend(page_fixes.into_iter().map(|kind| LintFix {
+                path: rel.clone(),
+                kind,
+            }));
+        }
 
         Ok(fixes)
     }
@@ -770,8 +805,32 @@ fn validate_index_grammar(text: &str) -> Vec<ForeignIndexContent> {
 
 fn detect_formatting_issues(pages: &HashMap<String, String>) -> Vec<LintFix> {
     let mut issues = Vec::new();
+    let mut formatted_index = None;
+    let mut formatted_log = None;
 
-    if let Some(text) = pages.get("wiki/index.md") {
+    for (path, text) in pages {
+        if !is_page_format_scope(path) {
+            continue;
+        }
+        let (updated, page_fixes) = fix_page_whitespace_text(text);
+        if page_fixes.is_empty() {
+            continue;
+        }
+        if path == "wiki/index.md" {
+            formatted_index = Some(updated);
+        } else if path == "wiki/log.md" {
+            formatted_log = Some(updated);
+        }
+        issues.extend(page_fixes.into_iter().map(|kind| LintFix {
+            path: path.clone(),
+            kind,
+        }));
+    }
+
+    let index_text = formatted_index
+        .as_deref()
+        .or_else(|| pages.get("wiki/index.md").map(String::as_str));
+    if let Some(text) = index_text {
         if fix_index_compact_whitespace_text(text).is_some() {
             issues.push(LintFix {
                 path: "wiki/index.md".to_string(),
@@ -780,7 +839,10 @@ fn detect_formatting_issues(pages: &HashMap<String, String>) -> Vec<LintFix> {
         }
     }
 
-    if let Some(text) = pages.get("wiki/log.md") {
+    let log_text = formatted_log
+        .as_deref()
+        .or_else(|| pages.get("wiki/log.md").map(String::as_str));
+    if let Some(text) = log_text {
         let (_, fixes) = fix_log_text(text);
         issues.extend(
             fixes
@@ -804,7 +866,114 @@ fn is_formatting_fix(kind: &str) -> bool {
             | "fix_log_date_padding"
             | "fix_log_space_after_date"
             | "fix_log_trailing_whitespace"
+            | "fix_page_blank_line_whitespace"
+            | "fix_page_final_newline"
+            | "fix_page_leading_whitespace"
+            | "fix_page_trailing_whitespace"
     )
+}
+
+fn is_locked_file(path: &str) -> bool {
+    expected_structure()
+        .iter()
+        .any(|item| item.path == path && item.kind == "file" && item.locked)
+}
+
+fn is_page_format_scope(path: &str) -> bool {
+    is_lint_scope_file(path) && !is_locked_file(path)
+}
+
+fn fix_page_whitespace_text(text: &str) -> (String, Vec<String>) {
+    let mut current = text.to_string();
+    let mut fixes = Vec::new();
+
+    if let Some(updated) = fix_page_leading_whitespace_text(&current) {
+        current = updated;
+        fixes.push("fix_page_leading_whitespace".to_string());
+    }
+    if let Some(updated) = fix_page_trailing_whitespace_text(&current) {
+        current = updated;
+        fixes.push("fix_page_trailing_whitespace".to_string());
+    }
+    if let Some(updated) = fix_page_blank_line_whitespace_text(&current) {
+        current = updated;
+        fixes.push("fix_page_blank_line_whitespace".to_string());
+    }
+    if let Some(updated) = fix_page_final_newline_text(&current) {
+        current = updated;
+        fixes.push("fix_page_final_newline".to_string());
+    }
+
+    (current, fixes)
+}
+
+fn fix_page_leading_whitespace_text(text: &str) -> Option<String> {
+    let updated = text.trim_start().to_string();
+    (updated.len() != text.len()).then_some(updated)
+}
+
+fn fix_page_trailing_whitespace_text(text: &str) -> Option<String> {
+    rewrite_page_lines_fence_aware(text, |line| {
+        if line.trim().is_empty() {
+            return None;
+        }
+        let trimmed = line.trim_end_matches([' ', '\t']);
+        (trimmed != line).then(|| trimmed.to_string())
+    })
+}
+
+fn fix_page_blank_line_whitespace_text(text: &str) -> Option<String> {
+    rewrite_page_lines_fence_aware(text, |line| {
+        (!line.is_empty() && line.trim().is_empty()).then(String::new)
+    })
+}
+
+fn fix_page_final_newline_text(text: &str) -> Option<String> {
+    (!text.ends_with('\n')).then(|| format!("{text}\n"))
+}
+
+fn rewrite_page_lines_fence_aware(
+    text: &str,
+    rewrite: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let mut changed = false;
+    let mut out = Vec::new();
+    let mut fence: Option<&'static str> = None;
+
+    for line in text.lines() {
+        if let Some(marker) = fence_marker(line) {
+            if fence == Some(marker) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(marker);
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        if fence.is_some() {
+            out.push(line.to_string());
+            continue;
+        }
+        if let Some(updated) = rewrite(line) {
+            out.push(updated);
+            changed = true;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+
+    changed.then(|| finish_rewrite(text, out))
+}
+
+fn fence_marker(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("```") {
+        Some("```")
+    } else if trimmed.starts_with("~~~") {
+        Some("~~~")
+    } else {
+        None
+    }
 }
 
 fn fix_index_compact_whitespace_text(text: &str) -> Option<String> {

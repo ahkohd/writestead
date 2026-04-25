@@ -474,6 +474,106 @@ fn lint_reports_formatting_issues_without_fixing() {
 }
 
 #[test]
+fn lint_reports_page_whitespace_without_fixing() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    let messy = "  ---\ntitle: Messy\ntype: entity\ncreated: 2026-04-25\nupdated: 2026-04-25\ntags: [test]\n---\n\n# Messy   \n   \n```rust\nfn main() {    \n    \n}\n```\n\n~~~text\nkeep    \n~~~";
+    fs::write(dir.path().join("wiki/entities/messy.md"), messy).expect("write messy");
+
+    let report = wiki.lint().expect("lint");
+    for kind in [
+        "fix_page_leading_whitespace",
+        "fix_page_trailing_whitespace",
+        "fix_page_blank_line_whitespace",
+        "fix_page_final_newline",
+    ] {
+        assert!(report
+            .formatting_issues
+            .iter()
+            .any(|fix| { fix.path == "wiki/entities/messy.md" && fix.kind == kind }));
+    }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("wiki/entities/messy.md")).expect("read messy"),
+        messy
+    );
+}
+
+#[test]
+fn lint_fix_applies_page_whitespace_idempotently() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    let messy = "  ---\ntitle: Messy\ntype: entity\ncreated: 2026-04-25\nupdated: 2026-04-25\ntags: [test]\n---\n\n# Messy   \n   \n```rust\nfn main() {    \n    \n}\n```\n\n~~~text\nkeep    \n~~~";
+    fs::write(dir.path().join("wiki/entities/messy.md"), messy).expect("write messy");
+
+    let fixed = wiki
+        .lint_with_options(LintOptions {
+            fix: true,
+            dry_run: false,
+        })
+        .expect("fix messy");
+    for kind in [
+        "fix_page_leading_whitespace",
+        "fix_page_trailing_whitespace",
+        "fix_page_blank_line_whitespace",
+        "fix_page_final_newline",
+    ] {
+        assert!(fixed
+            .fixes_applied
+            .iter()
+            .any(|fix| { fix.path == "wiki/entities/messy.md" && fix.kind == kind }));
+    }
+
+    let expected = "---\ntitle: Messy\ntype: entity\ncreated: 2026-04-25\nupdated: 2026-04-25\ntags: [test]\n---\n\n# Messy\n\n```rust\nfn main() {    \n    \n}\n```\n\n~~~text\nkeep    \n~~~\n";
+    let actual =
+        fs::read_to_string(dir.path().join("wiki/entities/messy.md")).expect("fixed messy");
+    assert_eq!(actual, expected);
+
+    let second = wiki
+        .lint_with_options(LintOptions {
+            fix: true,
+            dry_run: false,
+        })
+        .expect("fix again");
+    assert!(second
+        .fixes_applied
+        .iter()
+        .all(|fix| { fix.path != "wiki/entities/messy.md" || !fix.kind.starts_with("fix_page_") }));
+}
+
+#[test]
+fn lint_page_formatter_skips_locked_files() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    fs::write(
+        dir.path().join("SCHEMA.md"),
+        "  ---\ntitle: Drifted\ntype: schema\nversion: 1\n---\n\n# Drifted   ",
+    )
+    .expect("drift schema");
+
+    let report = wiki.lint().expect("lint");
+    assert!(report
+        .content_drift
+        .iter()
+        .any(|item| item.path == "SCHEMA.md"));
+    assert!(report
+        .formatting_issues
+        .iter()
+        .all(|fix| fix.path != "SCHEMA.md"));
+
+    let fixed = wiki
+        .lint_with_options(LintOptions {
+            fix: true,
+            dry_run: false,
+        })
+        .expect("fix schema");
+    assert!(fixed
+        .fixes_applied
+        .iter()
+        .any(|fix| fix.path == "SCHEMA.md" && fix.kind == "restore_locked"));
+    assert!(fixed
+        .fixes_applied
+        .iter()
+        .all(|fix| fix.path != "SCHEMA.md" || !fix.kind.starts_with("fix_page_")));
+}
+
+#[test]
 fn lint_reports_and_fixes_unindexed_pages() {
     let (dir, _cfg, wiki) = setup_wiki();
     fs::write(
