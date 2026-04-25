@@ -1,8 +1,9 @@
 use crate::wiki::{
     build_link_index, default_frontmatter_for_path, expected_type_for_path, extract_wikilinks,
     is_content_page, is_iso_date, is_lint_scope_file, normalize_link_key, parse_frontmatter,
-    parse_frontmatter_value, resolve_link, sha256_hex, strip_markdown_code, template_for_path,
-    title_from_path, validate_frontmatter_schema, yaml_string_field, FrontmatterValue, WikiOps,
+    parse_frontmatter_value, resolve_link, sha256_hex, strip_markdown_code,
+    template_for_path_with_vault, title_from_path, validate_frontmatter_schema, yaml_string_field,
+    FrontmatterValue, WikiOps,
 };
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -210,7 +211,8 @@ impl WikiOps {
                 continue;
             }
             let actual = fs::read_to_string(&full).unwrap_or_default();
-            let expected = template_for_path(item.path);
+            let vault_path = root.to_string_lossy();
+            let expected = template_for_path_with_vault(item.path, vault_path.as_ref());
             if actual != expected {
                 content_drift.push(ContentDrift {
                     path: item.path.to_string(),
@@ -416,8 +418,12 @@ impl WikiOps {
                         }
                     }
                     if !dry_run {
-                        fs::write(&full, template_for_path(item.path))
-                            .with_context(|| format!("failed to write {}", full.display()))?;
+                        let vault_path = root.to_string_lossy();
+                        fs::write(
+                            &full,
+                            template_for_path_with_vault(item.path, vault_path.as_ref()),
+                        )
+                        .with_context(|| format!("failed to write {}", full.display()))?;
                     }
                     fixes.push(LintFix {
                         path: item.path.to_string(),
@@ -437,7 +443,8 @@ impl WikiOps {
                 continue;
             }
             let actual = fs::read_to_string(&full).unwrap_or_default();
-            let expected = template_for_path(item.path);
+            let vault_path = root.to_string_lossy();
+            let expected = template_for_path_with_vault(item.path, vault_path.as_ref());
             if actual != expected {
                 if !dry_run {
                     fs::write(&full, expected)
@@ -1228,8 +1235,62 @@ fn fix_log_text(text: &str) -> (String, Vec<String>) {
         current = updated;
         fixes.push("fix_log_sort_entries".to_string());
     }
+    if let Some(updated) = fix_log_compact_whitespace_text(&current) {
+        current = updated;
+        fixes.push("fix_log_compact_whitespace".to_string());
+    }
 
     (current, fixes)
+}
+
+fn fix_log_compact_whitespace_text(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut index = 0usize;
+    let mut out = Vec::new();
+
+    if lines.first() == Some(&"---") {
+        while index < lines.len() {
+            let line = lines[index];
+            out.push(line.to_string());
+            index += 1;
+            if index > 1 && line == "---" {
+                break;
+            }
+        }
+    }
+
+    while index < lines.len() && lines[index].trim().is_empty() {
+        index += 1;
+    }
+
+    let mut saw_heading = false;
+    if index < lines.len() && matches!(lines[index], "# Wiki Log" | "# Log") {
+        saw_heading = true;
+        index += 1;
+    }
+
+    if !saw_heading {
+        return None;
+    }
+
+    if !out.is_empty() {
+        out.push(String::new());
+    }
+    out.push("# Wiki Log".to_string());
+
+    let entries = lines[index..]
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    if !entries.is_empty() {
+        out.push(String::new());
+        out.extend(entries);
+    }
+
+    let mut updated = out.join("\n");
+    updated.push('\n');
+    (updated != text).then_some(updated)
 }
 
 fn fix_log_yank_foreign_text(text: &str) -> Option<String> {

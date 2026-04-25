@@ -3,7 +3,7 @@ use std::fs;
 use tempfile::TempDir;
 use writestead::config::{AppConfig, McpConfig, RawConfig, SearchConfig, SyncBackend, SyncConfig};
 use writestead::vault;
-use writestead::wiki::{template_for_path, LintOptions, WikiOps};
+use writestead::wiki::{template_for_path, template_for_path_with_vault, LintOptions, WikiOps};
 
 fn test_config(vault_path: &str) -> AppConfig {
     AppConfig {
@@ -33,6 +33,35 @@ fn sample_page(title: &str, body: &str) -> String {
         "---\ntitle: {}\ntype: entity\ncreated: 2026-04-23\nupdated: 2026-04-23\ntags: [test]\n---\n\n# {}\n\n{}\n",
         title, title, body
     )
+}
+
+#[test]
+fn schema_template_documents_wiki_operations() {
+    let schema = template_for_path("SCHEMA.md");
+
+    assert!(schema.contains("This file tells any LLM agent how to operate on this wiki."));
+    assert!(schema.contains("## Structure"));
+    assert!(schema.contains("## Operations"));
+    assert!(schema.contains("${vault}/           -- vault root"));
+    assert!(!schema.contains("describe the wiki conventions here"));
+}
+
+#[test]
+fn schema_template_can_render_concrete_vault_root() {
+    let schema = template_for_path_with_vault("SCHEMA.md", "/vault");
+
+    assert!(schema.contains("/vault/           -- vault root"));
+    assert!(!schema.contains("${vault}"));
+}
+
+#[test]
+fn fresh_init_schema_renders_vault_root() {
+    let (dir, _cfg, _wiki) = setup_wiki();
+    let schema = fs::read_to_string(dir.path().join("SCHEMA.md")).expect("read schema");
+    let expected_root = format!("{}/           -- vault root", dir.path().display());
+
+    assert!(schema.contains(&expected_root));
+    assert!(!schema.contains("${vault}"));
 }
 
 #[test]
@@ -391,6 +420,28 @@ fn lint_fix_applies_safe_log_repairs_idempotently() {
         .fixes_applied
         .iter()
         .all(|fix| fix.path != "wiki/log.md"));
+}
+
+#[test]
+fn lint_fix_compacts_log_blank_lines() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    let log = "---\ntitle: Log\ntype: log\n---\n\n\n# Wiki Log\n\n\n## [2026-04-06] update | first\n\n\n## [2026-04-05] update | second\n\n";
+    fs::write(dir.path().join("wiki/log.md"), log).expect("write log");
+
+    let fixed = wiki
+        .lint_with_options(LintOptions {
+            fix: true,
+            dry_run: false,
+        })
+        .expect("fix log");
+    assert!(fixed
+        .fixes_applied
+        .iter()
+        .any(|fix| { fix.path == "wiki/log.md" && fix.kind == "fix_log_compact_whitespace" }));
+
+    let expected = "---\ntitle: Log\ntype: log\n---\n\n# Wiki Log\n\n## [2026-04-06] update | first\n## [2026-04-05] update | second\n";
+    let actual = fs::read_to_string(dir.path().join("wiki/log.md")).expect("fixed log");
+    assert_eq!(actual, expected);
 }
 
 #[test]

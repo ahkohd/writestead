@@ -1,5 +1,5 @@
 use crate::config::AppConfig;
-use crate::wiki::template_for_path;
+use crate::wiki::template_for_path_with_vault;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -39,7 +39,7 @@ pub fn init_vault(cfg: &AppConfig, force: bool) -> Result<InitSummary> {
 
     for rel in files {
         let path = vault.join(rel);
-        let body = template_for_path(rel);
+        let body = template_for_path_with_vault(rel, &cfg.vault_path);
 
         if write_file_if_needed(&path, &body, force)? {
             created += 1;

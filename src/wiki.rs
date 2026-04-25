@@ -689,8 +689,12 @@ pub(crate) fn is_lint_scope_file(path: &str) -> bool {
 }
 
 pub fn template_for_path(path: &str) -> String {
+    template_for_path_with_vault(path, "${vault}")
+}
+
+pub fn template_for_path_with_vault(path: &str, vault_path: &str) -> String {
     match path {
-        "SCHEMA.md" => "---\ntitle: Wiki Schema\ntype: schema\nversion: 1\n---\n\n# Wiki Schema\n\n<!-- describe the wiki conventions here -->\n".to_string(),
+        "SCHEMA.md" => schema_template(vault_path),
         "SKILL.md" => r#"---
 title: Wiki Skill
 type: skill
@@ -699,10 +703,105 @@ type: skill
 # Wiki Skill
 
 See wiki_help for workflow.
-"#.to_string(),
+"#
+        .to_string(),
         "wiki/index.md" => "---\ntitle: Index\ntype: index\n---\n\n# Wiki Index\n".to_string(),
         "wiki/log.md" => "---\ntitle: Log\ntype: log\n---\n\n# Wiki Log\n".to_string(),
         _ => default_frontmatter_for_path(path),
+    }
+}
+
+fn schema_template(vault_path: &str) -> String {
+    let vault_root = render_vault_root(vault_path);
+    format!(
+        r#"---
+title: Wiki Schema
+type: schema
+version: 1
+---
+
+# Wiki Schema
+
+This file tells any LLM agent how to operate on this wiki.
+
+## Structure
+
+```
+{vault_root}           -- vault root
+  raw/              -- immutable source documents (articles, papers, notes)
+  raw/assets/       -- downloaded images and media
+  wiki/             -- LLM-maintained pages
+  wiki/index.md     -- catalog of all wiki pages
+  wiki/log.md       -- chronological record of operations
+  SCHEMA.md         -- this file
+```
+
+## Page Types
+
+- **Source summaries** -- `wiki/sources/` -- one page per ingested source
+- **Entity pages** -- `wiki/entities/` -- people, companies, projects, tools
+- **Concept pages** -- `wiki/concepts/` -- ideas, patterns, techniques
+- **Analyses** -- `wiki/analyses/` -- comparisons, syntheses, investigations
+
+## Conventions
+
+- All wiki pages are markdown with YAML frontmatter
+- Frontmatter includes: `title`, `type` (source/entity/concept/analysis), `created`, `updated`, `tags`
+- Use `[[wikilinks]]` for cross-references between pages
+- Bullet points over tables for readability
+- No emojis in wiki content
+- Keep pages focused -- one topic per page
+
+## Frontmatter Template
+
+```yaml
+---
+title: Page Title
+type: source | entity | concept | analysis
+created: 2026-04-18
+updated: 2026-04-18
+tags: [tag1, tag2]
+---
+```
+
+## Operations
+
+### Ingest
+
+1. Read the source from `raw/`
+2. Discuss key takeaways with the user
+3. Create a summary page in `wiki/sources/`
+4. Update or create relevant entity and concept pages
+5. Update `wiki/index.md`
+6. Append entry to `wiki/log.md`
+
+### Query
+
+1. Read `wiki/index.md` to find relevant pages
+2. Read relevant wiki pages
+3. Synthesize answer with `[[citations]]`
+4. If the answer is valuable, file it as a new analysis page
+
+### Lint
+
+1. Check for contradictions between pages
+2. Find orphan pages (no inbound links)
+3. Identify concepts mentioned but lacking their own page
+4. Flag stale claims superseded by newer sources
+5. Suggest new questions or sources to investigate
+"#
+    )
+}
+
+fn render_vault_root(vault_path: &str) -> String {
+    let trimmed = vault_path.trim();
+    if trimmed.is_empty() {
+        return "${vault}/".to_string();
+    }
+    if trimmed.ends_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/")
     }
 }
 
