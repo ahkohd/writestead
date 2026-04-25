@@ -688,10 +688,67 @@ pub(crate) fn is_lint_scope_file(path: &str) -> bool {
     expected_type_for_path(path).is_some()
 }
 
-pub(crate) fn template_for_path(path: &str) -> String {
+pub fn template_for_path(path: &str) -> String {
     match path {
         "SCHEMA.md" => "---\ntitle: Wiki Schema\ntype: schema\nversion: 1\n---\n\n# Wiki Schema\n\n<!-- describe the wiki conventions here -->\n".to_string(),
-        "SKILL.md" => "---\ntitle: Wiki Skill\ntype: skill\n---\n\n# Wiki Skill\n".to_string(),
+        "SKILL.md" => r#"---
+title: Wiki Skill
+type: skill
+---
+
+# Wiki Skill
+
+## Core workflow
+
+Ingest:
+1. raw_list to discover source files
+2. raw_read to extract paginated text
+3. reason about structure outside writestead
+4. wiki_write for new pages, wiki_edit for targeted updates
+5. wiki_lint after a batch of wiki changes
+6. wiki_sync after write or edit operations
+
+## Lint
+
+After a batch of wiki changes:
+- wiki_lint - report structural health
+- wiki_lint { fix: true } - apply safe mechanical fixes
+- wiki_lint { fix: true, dry_run: true } - preview fixes
+
+Autofixable:
+- drifted SCHEMA.md / SKILL.md - restored
+- missing directories / files - created
+- missing frontmatter - prepended
+- foreign content in index/log - yanked
+- log format normalization and newest-first sort
+- stale index wikilinks - removed when every link in a bullet is stale
+- missing content-page entries in index - inserted
+
+Report-only (needs editorial judgment):
+- malformed log entries
+- mixed stale and valid bullets in index
+- broken cross-reference wikilinks
+- duplicate index sections and duplicate primary index entries
+
+## Structural contracts
+
+- wiki/index.md: # Wiki Index, then canonical ## sections
+  (Entities, Concepts, Sources, Analyses), curator ### subsections,
+  wikilink bullets only. No prose, no non-canonical markdown.
+- wiki/log.md: # Wiki Log, then ## [YYYY-MM-DD] <action> | <description>
+  entries, newest first. Actions: create, update, delete, rename, move,
+  link, unlink, sync.
+- SCHEMA.md and SKILL.md are locked. Do not edit manually.
+- Content pages live in wiki/entities, wiki/concepts, wiki/sources,
+  or wiki/analyses. Page type in frontmatter must match directory.
+
+## Conventions
+
+- Every wiki page has YAML frontmatter: title, type, created, updated, tags.
+- Use `[[wikilinks]]` or `[[slug|Display]]` for cross-references.
+- No emojis in page content or logs.
+- Sync after writes so remote state matches local.
+"#.to_string(),
         "wiki/index.md" => "---\ntitle: Index\ntype: index\n---\n\n# Wiki Index\n".to_string(),
         "wiki/log.md" => "---\ntitle: Log\ntype: log\n---\n\n# Wiki Log\n".to_string(),
         _ => default_frontmatter_for_path(path),

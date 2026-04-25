@@ -982,6 +982,7 @@ async fn wiki_help() {
         .unwrap_or_default()
         .to_lowercase();
     assert!(text.contains("ingest workflow"));
+    assert!(text.contains("wiki_lint"));
 
     server.shutdown().await;
 }

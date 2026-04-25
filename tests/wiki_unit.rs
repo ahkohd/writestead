@@ -3,7 +3,7 @@ use std::fs;
 use tempfile::TempDir;
 use writestead::config::{AppConfig, McpConfig, RawConfig, SearchConfig, SyncBackend, SyncConfig};
 use writestead::vault;
-use writestead::wiki::{LintOptions, WikiOps};
+use writestead::wiki::{template_for_path, LintOptions, WikiOps};
 
 fn test_config(vault_path: &str) -> AppConfig {
     AppConfig {
@@ -119,6 +119,21 @@ fn list_pages_is_paginated() {
     assert_eq!(page2.offset, 2);
     assert_eq!(page2.limit, 2);
     assert!(page2.total >= page1.total);
+}
+
+#[test]
+fn skill_template_documents_lint_and_contracts() {
+    let skill = template_for_path("SKILL.md");
+    assert!(skill.contains("## Lint"));
+    assert!(skill.contains("Autofixable"));
+    assert!(skill.contains("## Structural contracts"));
+}
+
+#[test]
+fn fresh_init_skill_matches_template() {
+    let (dir, _cfg, _wiki) = setup_wiki();
+    let skill = fs::read_to_string(dir.path().join("SKILL.md")).expect("read skill");
+    assert_eq!(skill, template_for_path("SKILL.md"));
 }
 
 #[test]
