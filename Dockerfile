@@ -2,7 +2,7 @@ FROM rust:1-alpine AS builder
 RUN apk add --no-cache musl-dev
 RUN cargo install writestead --locked --force
 
-FROM node:22-alpine
+FROM node:24-alpine
 RUN apk add --no-cache \
     ca-certificates \
     fd \
