@@ -1,6 +1,6 @@
 {
   "name": "@ahkohd/writestead",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "LLM Wiki",
   "license": "MIT",
   "repository": {
@@ -24,10 +24,10 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@ahkohd/writestead-darwin-arm64": "0.1.13",
-    "@ahkohd/writestead-darwin-x64": "0.1.13",
-    "@ahkohd/writestead-linux-x64-gnu": "0.1.13",
-    "@ahkohd/writestead-win32-x64-msvc": "0.1.13"
+    "@ahkohd/writestead-darwin-arm64": "0.1.14",
+    "@ahkohd/writestead-darwin-x64": "0.1.14",
+    "@ahkohd/writestead-linux-x64-gnu": "0.1.14",
+    "@ahkohd/writestead-win32-x64-msvc": "0.1.14"
   },
   "scripts": {
     "pack:dry": "npm pack --dry-run",
