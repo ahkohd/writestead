@@ -9,13 +9,16 @@ Vault layout:
 - wiki/log.md is the change log.
 
 Ingest workflow:
-1) raw_list to discover source files.
-2) raw_read to extract paginated text.
-3) agent reasoning outside writestead.
-4) wiki_write for new pages, wiki_edit for targeted updates.
-5) wiki_lint to verify structural health.
-6) wiki_lint { fix: true } if autofixable issues exist.
-7) wiki_sync after write or edit operations.
+1. raw_list to discover source files.
+2. raw_read to extract paginated text.
+3. agent reasoning outside writestead.
+4. wiki_write for new pages, wiki_edit for targeted updates.
+5. wiki_sync after write or edit operations.
+
+Best practices:
+1. Run wiki_lint after editing to validate.
+2. Pass { fix: true } to autofix safe drift.
+3. Address remaining findings manually.
 
 Conventions:
 - Every wiki page must have YAML frontmatter.

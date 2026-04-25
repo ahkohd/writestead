@@ -982,7 +982,16 @@ async fn wiki_help() {
         .unwrap_or_default()
         .to_lowercase();
     assert!(text.contains("ingest workflow"));
+    assert!(text.contains("best practices"));
     assert!(text.contains("wiki_lint"));
+    assert!(!text.contains("5. wiki_lint"));
+    assert!(!text.contains("6. wiki_lint"));
+    let ingest = text
+        .split("ingest workflow:")
+        .nth(1)
+        .and_then(|rest| rest.split("best practices:").next())
+        .unwrap_or_default();
+    assert_eq!(ingest.matches(". ").count(), 5);
 
     server.shutdown().await;
 }

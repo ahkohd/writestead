@@ -122,11 +122,11 @@ fn list_pages_is_paginated() {
 }
 
 #[test]
-fn skill_template_documents_lint_and_contracts() {
-    let skill = template_for_path("SKILL.md");
-    assert!(skill.contains("## Lint"));
-    assert!(skill.contains("Autofixable"));
-    assert!(skill.contains("## Structural contracts"));
+fn skill_template_points_to_wiki_help() {
+    assert_eq!(
+        template_for_path("SKILL.md"),
+        "---\ntitle: Wiki Skill\ntype: skill\n---\n\n# Wiki Skill\n\nSee wiki_help for workflow.\n"
+    );
 }
 
 #[test]
