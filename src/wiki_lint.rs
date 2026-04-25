@@ -596,12 +596,7 @@ fn validate_index(
     let raw_index_text = pages.get("wiki/index.md").cloned().unwrap_or_default();
     let index_text = fix_index_yank_foreign_text(&raw_index_text).unwrap_or(raw_index_text);
     let indexed_targets = index_resolved_targets(&index_text, link_index);
-    let mut target_counts: HashMap<String, usize> = HashMap::new();
-    for link in extract_wikilinks(&strip_markdown_code(&index_text)) {
-        if let Some(target) = resolve_link(&link, link_index) {
-            *target_counts.entry(target).or_insert(0) += 1;
-        }
-    }
+    let target_counts = primary_index_target_counts(&index_text, link_index);
 
     let content_pages = pages
         .iter()
@@ -799,6 +794,25 @@ fn contains_raw_markdown_link(text: &str) -> bool {
     static RAW_MARKDOWN_LINK_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\[[^\]]+\]\([^)]+\)").expect("valid regex"));
     RAW_MARKDOWN_LINK_RE.is_match(text)
+}
+
+fn primary_index_target_counts(
+    text: &str,
+    link_index: &HashMap<String, String>,
+) -> HashMap<String, usize> {
+    let mut target_counts = HashMap::new();
+    for line in strip_markdown_code(text).lines() {
+        if !line.trim_start().starts_with("- ") {
+            continue;
+        }
+        let Some(link) = extract_wikilinks(line).into_iter().next() else {
+            continue;
+        };
+        if let Some(target) = resolve_link(&link, link_index) {
+            *target_counts.entry(target).or_insert(0) += 1;
+        }
+    }
+    target_counts
 }
 
 fn index_resolved_targets(text: &str, link_index: &HashMap<String, String>) -> HashSet<String> {

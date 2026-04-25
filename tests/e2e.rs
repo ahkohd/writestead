@@ -844,6 +844,58 @@ async fn wiki_lint_detects_broken_link() {
 }
 
 #[tokio::test]
+async fn mcp_wiki_lint_fix_and_dry_run_apply_options() {
+    let server = setup().await;
+    let mut client = TestClient::new(server.base_url());
+    client.mcp_init().await;
+
+    let schema_path = PathBuf::from(&server.cfg.vault_path).join("SCHEMA.md");
+    let canonical_schema = fs::read_to_string(&schema_path).expect("read schema");
+    fs::write(
+        &schema_path,
+        "---\ntitle: Drifted\ntype: schema\nversion: 1\n---\n\n# Drifted\n",
+    )
+    .expect("drift schema");
+
+    let dry_run = tool_call(
+        &mut client,
+        "wiki_lint",
+        json!({ "fix": true, "dry_run": true }),
+    )
+    .await;
+    let dry_payload = parse_tool_json(&dry_run);
+    assert!(dry_payload["fixes_applied"]
+        .as_array()
+        .is_some_and(|fixes| {
+            fixes
+                .iter()
+                .any(|fix| fix["path"] == "SCHEMA.md" && fix["kind"] == "restore_locked")
+        }));
+    assert_ne!(
+        fs::read_to_string(&schema_path).expect("read dry schema"),
+        canonical_schema,
+        "dry_run must not write"
+    );
+
+    let fixed = tool_call(&mut client, "wiki_lint", json!({ "fix": true })).await;
+    let fixed_payload = parse_tool_json(&fixed);
+    assert!(fixed_payload["fixes_applied"]
+        .as_array()
+        .is_some_and(|fixes| {
+            fixes
+                .iter()
+                .any(|fix| fix["path"] == "SCHEMA.md" && fix["kind"] == "restore_locked")
+        }));
+    assert_eq!(
+        fs::read_to_string(&schema_path).expect("read fixed schema"),
+        canonical_schema,
+        "fix must write through MCP"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn wiki_index_auto_updated() {
     let server = setup().await;
     let mut client = TestClient::new(server.base_url());

@@ -548,6 +548,84 @@ fn lint_allows_valid_index_subsections() {
 }
 
 #[test]
+fn append_log_inserts_new_entries_at_top() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    fs::write(
+        dir.path().join("wiki/log.md"),
+        "---\ntitle: Log\ntype: log\n---\n\n# Wiki Log\n\n## [2026-04-24] update | older\n",
+    )
+    .expect("write log");
+
+    wiki.append_log("2026-04-25", "update", "newer")
+        .expect("append newer");
+    wiki.append_log("2026-04-26", "update", "newest")
+        .expect("append newest");
+
+    let log = fs::read_to_string(dir.path().join("wiki/log.md")).expect("read log");
+    let entries: Vec<&str> = log
+        .lines()
+        .filter(|line| line.starts_with("## ["))
+        .collect();
+    assert_eq!(
+        entries,
+        vec![
+            "## [2026-04-26] update | newest",
+            "## [2026-04-25] update | newer",
+            "## [2026-04-24] update | older",
+        ]
+    );
+    assert!(wiki
+        .lint()
+        .expect("lint")
+        .out_of_order_log_entries
+        .is_empty());
+}
+
+#[test]
+fn append_log_inserts_first_entry_after_heading() {
+    let (dir, _cfg, wiki) = setup_wiki();
+
+    wiki.append_log("2026-04-25", "update", "first")
+        .expect("append first");
+
+    let log = fs::read_to_string(dir.path().join("wiki/log.md")).expect("read log");
+    let entry_line = log
+        .lines()
+        .position(|line| line == "## [2026-04-25] update | first")
+        .expect("entry line")
+        + 1;
+    assert_eq!(entry_line, 8);
+    assert!(wiki
+        .lint()
+        .expect("lint")
+        .out_of_order_log_entries
+        .is_empty());
+}
+
+#[test]
+fn append_log_is_crlf_safe() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    fs::write(
+        dir.path().join("wiki/log.md"),
+        "---\r\ntitle: Log\r\ntype: log\r\n---\r\n\r\n# Wiki Log\r\n\r\n## [2026-04-24] update | older\r\n",
+    )
+    .expect("write crlf log");
+
+    wiki.append_log("2026-04-25", "update", "newer")
+        .expect("append newer");
+
+    let log = fs::read_to_string(dir.path().join("wiki/log.md")).expect("read log");
+    assert!(log.contains(
+        "# Wiki Log\r\n\r\n## [2026-04-25] update | newer\n## [2026-04-24] update | older\r\n"
+    ));
+    assert!(wiki
+        .lint()
+        .expect("lint")
+        .out_of_order_log_entries
+        .is_empty());
+}
+
+#[test]
 fn lint_reports_duplicate_index_entries() {
     let (dir, _cfg, wiki) = setup_wiki();
     fs::write(
@@ -566,6 +644,41 @@ fn lint_reports_duplicate_index_entries() {
         .duplicate_index_entries
         .iter()
         .any(|entry| entry.slug == "dupe" && entry.count == 2));
+}
+
+#[test]
+fn lint_duplicate_index_entries_ignore_description_cross_refs() {
+    let (dir, _cfg, wiki) = setup_wiki();
+    fs::write(
+        dir.path().join("wiki/entities/monitoring.md"),
+        sample_page("Monitoring", "target"),
+    )
+    .expect("write monitoring");
+    fs::write(
+        dir.path().join("wiki/entities/netdata.md"),
+        sample_page("Netdata", "target"),
+    )
+    .expect("write netdata");
+    fs::write(
+        dir.path().join("wiki/index.md"),
+        "---\ntitle: Index\ntype: index\n---\n\n# Wiki Index\n\n## Entities\n\n- [[monitoring|Monitoring]] -- Prometheus stack\n- [[netdata|Netdata]] -- replaced by [[monitoring]]\n- [[monitoring|Monitoring]] -- see also [[monitoring]]\n\n## Sources\n\n## Concepts\n\n## Analyses\n",
+    )
+    .expect("write index");
+
+    let report = wiki.lint().expect("lint");
+    assert!(report
+        .duplicate_index_entries
+        .iter()
+        .any(|entry| entry.slug == "monitoring" && entry.count == 2));
+
+    fs::write(
+        dir.path().join("wiki/index.md"),
+        "---\ntitle: Index\ntype: index\n---\n\n# Wiki Index\n\n## Entities\n\n- [[monitoring|Monitoring]] -- Prometheus stack\n- [[netdata|Netdata]] -- replaced by [[monitoring]]\n\n## Sources\n\n## Concepts\n\n## Analyses\n",
+    )
+    .expect("write index without duplicate primary");
+
+    let report = wiki.lint().expect("lint");
+    assert!(report.duplicate_index_entries.is_empty());
 }
 
 #[test]

@@ -335,8 +335,20 @@ impl WikiOps {
     pub fn append_log(&self, date: &str, action: &str, description: &str) -> Result<()> {
         let log_path = self.resolve_rel_path("wiki/log.md")?;
         let mut text = fs::read_to_string(&log_path).unwrap_or_default();
-        let entry = format!("\n## [{}] {} | {}\n", date, action, description);
-        text.push_str(&entry);
+        let entry = format!("## [{}] {} | {}\n", date, action, description);
+
+        if let Some(byte_pos) = log_entry_insert_offset(&text) {
+            text.insert_str(byte_pos, &entry);
+        } else {
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            if !text.ends_with("\n\n") {
+                text.push('\n');
+            }
+            text.push_str(&entry);
+        }
+
         fs::write(&log_path, text)
             .with_context(|| format!("failed to write {}", log_path.display()))?;
         Ok(())
@@ -419,6 +431,17 @@ impl WikiOps {
             .with_context(|| format!("failed to write {}", index_path.display()))?;
         Ok(())
     }
+}
+
+fn log_entry_insert_offset(text: &str) -> Option<usize> {
+    let mut offset = 0;
+    for segment in text.split_inclusive('\n') {
+        if segment.trim_start().starts_with("## [") {
+            return Some(offset);
+        }
+        offset += segment.len();
+    }
+    None
 }
 
 fn next_char_boundary(text: &str, mut index: usize) -> usize {
