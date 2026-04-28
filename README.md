@@ -20,7 +20,7 @@ Writestead gives you:
 npm i -g @ahkohd/writestead
 
 # homebrew (macOS, Linux)
-brew install ahkohd/tap/writestead
+brew install ahkohd/writestead/writestead
 
 # cargo
 cargo install writestead --locked --force
