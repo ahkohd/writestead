@@ -19,7 +19,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  HOMEBREW_TAP_REPO: ahkohd/tap
+  HOMEBREW_TAP_REPO: ahkohd/homebrew-writestead
 
 jobs:
   release:
