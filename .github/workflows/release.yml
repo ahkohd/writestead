@@ -32,7 +32,7 @@ jobs:
       version: ${{ steps.version.outputs.new }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ssh-key: ${{ secrets.DEPLOY_KEY }}
@@ -150,7 +150,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: v${{ needs.release.outputs.version }}
 
@@ -188,7 +188,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: v${{ needs.release.outputs.version }}
 
